@@ -36,6 +36,7 @@ jobs:
           git clone https://github.com/kdmukAI-bot/seedsigner-c-modules.git sources/seedsigner-c-modules
           cd sources/seedsigner-c-modules
           git checkout "${{ github.event_name == 'workflow_dispatch' && inputs.c_modules_ref || 'master' }}"
+          git submodule update --init --recursive
 
       - name: Build firmware + screenshots
         run: |
