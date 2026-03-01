@@ -61,7 +61,7 @@ set(SDKCONFIG_DEFAULTS ${CMAKE_BINARY_DIR}/sdkconfig.combined)
 
 # Allow external ESP-IDF component tree (for custom integration projects).
 if(NOT DEFINED MICROPY_EXTRA_COMPONENT_DIRS)
-    set(MICROPY_EXTRA_COMPONENT_DIRS "/home/keith/.openclaw/dev/micropython-project/custom-c-modules/components")
+    set(MICROPY_EXTRA_COMPONENT_DIRS "/home/keith/.openclaw/dev/seedsigner-c-modules/components")
 endif()
 if(EXISTS "${MICROPY_EXTRA_COMPONENT_DIRS}")
     list(APPEND EXTRA_COMPONENT_DIRS "${MICROPY_EXTRA_COMPONENT_DIRS}")
