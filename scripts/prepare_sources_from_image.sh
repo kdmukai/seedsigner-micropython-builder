@@ -17,4 +17,20 @@ if [ ! -d "$WORKDIR/esp-idf" ]; then
   cp -a /opt/toolchains/esp-idf "$WORKDIR/esp-idf"
 fi
 
+
+# Ensure expected upstream remote exists for baseline verification.
+BASELINE_FILE="$ROOT_DIR/platform_mods/micropython_mods/BASELINE"
+if [ -f "$BASELINE_FILE" ]; then
+  # shellcheck disable=SC1090
+  source "$BASELINE_FILE"
+  UPSTREAM_REMOTE="${UPSTREAM_REMOTE:-upstream}"
+  UPSTREAM_URL="${UPSTREAM_URL:-https://github.com/micropython/micropython.git}"
+  if [ -d "$WORKDIR/micropython/.git" ]; then
+    if ! git -C "$WORKDIR/micropython" remote get-url "$UPSTREAM_REMOTE" >/dev/null 2>&1; then
+      git -C "$WORKDIR/micropython" remote add "$UPSTREAM_REMOTE" "$UPSTREAM_URL"
+      echo "Added missing remote '$UPSTREAM_REMOTE' -> $UPSTREAM_URL"
+    fi
+  fi
+fi
+
 echo "Sources prepared in: $WORKDIR"
