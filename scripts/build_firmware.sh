@@ -32,7 +32,11 @@ fi
 
 export IDF_PATH="$IDF_DIR"
 # shellcheck disable=SC1091
-source "$IDF_PATH/export.sh"
+if ! source "$IDF_PATH/export.sh" >/dev/null 2>&1; then
+  echo "ESP-IDF Python env missing; running IDF install.sh"
+  "$IDF_PATH/install.sh" esp32
+  source "$IDF_PATH/export.sh"
+fi
 
 # build mpy-cross from canonical tree
 {
