@@ -9,10 +9,8 @@ IDF_OVERRIDE_DIR="${IDF_OVERRIDE_DIR:-}"
 PREBAKED_IDF_DIR="/opt/toolchains/esp-idf"
 FALLBACK_IDF_DIR="$WORKDIR/esp-idf"
 
-if command -v apt-get >/dev/null 2>&1; then
-  sudo apt-get update
-  sudo apt-get install -y git make cmake ninja-build ccache rsync python3 python3-venv python3-pip libffi-dev libssl-dev libpng-dev dfu-util libusb-1.0-0 libsdl2-2.0-0 libslirp0
-fi
+# Dependency installation is intentionally not performed here.
+# Required tooling must be provided by the GHCR base image.
 
 if [ -n "$IDF_OVERRIDE_DIR" ]; then
   IDF_DIR="$IDF_OVERRIDE_DIR"
@@ -39,7 +37,6 @@ mkdir -p "$IDF_TOOLS_PATH"
 export IDF_PATH="$IDF_DIR"
 # shellcheck disable=SC1091
 source "$IDF_PATH/export.sh"
-python3 "$IDF_PATH/tools/idf_tools.py" install riscv32-esp-elf-gdb
 idf.py --version >/dev/null
 
 echo "Environment setup complete."

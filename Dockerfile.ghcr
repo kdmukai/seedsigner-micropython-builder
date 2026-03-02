@@ -13,6 +13,10 @@ RUN apt-get update && apt-get install -y \
     ca-certificates curl imagemagick && \
     rm -rf /var/lib/apt/lists/*
 
+# Local Docker runs use host uid:gid (typically 1001:1001).
+# Add a matching passwd entry to avoid getpwuid warnings in ESP-IDF tooling.
+RUN groupadd -g 1001 builder && useradd -m -u 1001 -g 1001 -s /bin/bash builder
+
 # Prebaked toolchain/source roots
 RUN mkdir -p /opt/bases /opt/toolchains "$IDF_TOOLS_PATH"
 

@@ -50,8 +50,7 @@ fi
 export IDF_PATH="$IDF_DIR"
 # shellcheck disable=SC1091
 source "$IDF_PATH/export.sh"
-python3 "$IDF_PATH/tools/idf_tools.py" install riscv32-esp-elf-gdb >/dev/null 2>&1 || true
-idf.py --version >/dev/null 2>&1 || { echo "ERROR: idf.py not runnable"; exit 1; }
+idf.py --version >/dev/null 2>&1 || { echo "ERROR: idf.py not runnable (GHCR base image ESP-IDF toolchain missing/broken)"; exit 1; }
 
 USER_C_MODULES_FILE="$CMODS_DIR/usercmodule.cmake"
 MICROPY_CMAKE_ARGS="${CMAKE_ARGS:-} -DUSER_C_MODULES=$USER_C_MODULES_FILE"

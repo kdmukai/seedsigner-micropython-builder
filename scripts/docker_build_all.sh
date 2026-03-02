@@ -4,17 +4,14 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-# Avoid git ownership issues with host-mounted workspace.
-git config --global --add safe.directory '*' || true
+# Ensure writable HOME/cache for non-root container users.
+export HOME="/tmp/home"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
+mkdir -p "$HOME" "$XDG_CACHE_HOME"
 
-# Some images may not include sudo; setup_env.sh uses it on apt-based hosts.
-if ! command -v sudo >/dev/null 2>&1; then
-  cat >/usr/local/bin/sudo <<'EOS'
-#!/usr/bin/env bash
-exec "$@"
-EOS
-  chmod +x /usr/local/bin/sudo
-fi
+# Avoid git ownership issues with host-mounted workspace and prebaked IDF checkout.
+git config --global --add safe.directory '*' || true
+git config --global --add safe.directory /opt/toolchains/esp-idf || true
 
 mkdir -p sources
 ./scripts/prepare_sources_from_image.sh "$ROOT_DIR/sources"
