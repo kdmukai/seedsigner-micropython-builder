@@ -15,23 +15,30 @@ By default scripts assume sources are under `sources/` in this repo:
 
 - `sources/micropython`
 - `sources/seedsigner-c-modules`
-- `sources/esp-idf`
 
-## Local build (host)
+ESP-IDF is expected from the prebaked image path (`/opt/toolchains/esp-idf`) for CI and recommended Docker local runs.
 
-```bash
-./scripts/setup_env.sh
-./scripts/ci_build.sh
-```
+Policy: local development is containerized only. Do not install build toolchains on host machines.
 
-## Local build (Docker)
+## Local build (Docker only, GHCR base image)
 
 ```bash
-make docker-build
 make docker-shell
 # inside container:
 ./scripts/setup_env.sh
 ./scripts/ci_build.sh
+```
+
+Optional override:
+
+```bash
+make docker-shell IMAGE=ghcr.io/<owner>/seedsigner-micropython-builder-base:latest
+```
+
+## One-liner Docker build (setup + firmware + screenshots)
+
+```bash
+make docker-build-all
 ```
 
 ## CI
