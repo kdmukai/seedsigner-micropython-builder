@@ -41,6 +41,10 @@ make docker-shell IMAGE=ghcr.io/<owner>/seedsigner-micropython-builder-base:late
 make docker-build-all
 ```
 
+Notes on default behavior:
+- First run: if `sources/micropython` is missing, it is seeded automatically.
+- Subsequent runs: if `sources/micropython` is dirty, build uses your current working tree and skips auto-repatching.
+
 ## CI
 
 GitHub Actions workflow: `.github/workflows/build-firmware.yml`
