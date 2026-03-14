@@ -9,12 +9,25 @@ Build orchestration repo for SeedSigner MicroPython firmware without maintaining
 - `scripts/` — shared setup/apply/build scripts used by both CI and local dev
 - `.github/workflows/` — CI workflow that runs the same scripts
 
-## Default local sources layout
+## Cloning and submodule setup
 
-By default scripts assume sources are under `sources/` in this repo:
+This repo uses git submodules for its source dependencies. After cloning, initialize them:
 
-- `sources/micropython`
-- `sources/seedsigner-c-modules`
+```bash
+git clone https://github.com/kdmukAI-bot/seedsigner-micropython-builder.git
+cd seedsigner-micropython-builder
+git submodule update --init --recursive
+```
+
+The `--recursive` flag is required because `seedsigner-c-modules` contains its own submodule (LVGL).
+
+If you've already cloned without `--recursive`, run `git submodule update --init --recursive` from the repo root to fetch everything.
+
+### Submodule layout
+
+- `sources/micropython` — MicroPython firmware (pinned to a release tag)
+- `sources/seedsigner-c-modules` — SeedSigner C modules (LVGL screens, navigation)
+  - `third_party/lvgl` — LVGL graphics library (nested submodule)
 
 ESP-IDF is expected from the prebaked image path (`/opt/toolchains/esp-idf`) for CI and recommended Docker local runs.
 
@@ -116,7 +129,7 @@ The workflow supports `workflow_dispatch` with optional inputs:
 Defaults:
 
 - `builder_ref = main`
-- `c_modules_ref = master`
+- `c_modules_ref = main`
 
 Use this to test feature branches of either repo without changing default CI behavior.
 

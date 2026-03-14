@@ -4,7 +4,9 @@
 /out/
 
 # Local source worktrees cloned/seeded at runtime
-/sources/
+/sources/*
+!/sources/seedsigner-c-modules
+!/sources/micropython
 
 # Local tool/cache directories
 /.espressif/
