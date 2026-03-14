@@ -14,12 +14,12 @@ WORKDIR="${1:-$ROOT_DIR/sources}"
 MP_DIR="$WORKDIR/micropython"
 CMODS_DIR="$WORKDIR/seedsigner-c-modules"
 
-if [ ! -d "$MP_DIR/.git" ]; then
+if [ ! -e "$MP_DIR/.git" ]; then
   echo "ERROR: expected MicroPython repo at: $MP_DIR"
   exit 1
 fi
 
-if [ ! -d "$CMODS_DIR/.git" ]; then
+if [ ! -e "$CMODS_DIR/.git" ]; then
   echo "ERROR: expected seedsigner-c-modules repo at: $CMODS_DIR"
   exit 1
 fi

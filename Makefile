@@ -29,7 +29,7 @@ clean:
 		build \
 		logs \
 		sources/micropython/ports/esp32/build* \
-		sources/seedsigner-c-modules/tests/screenshot_generator/build
+		sources/seedsigner-c-modules/tools/screenshot_generator/build
 
 # Deeper clean: clean + purge local ccache
 clean-purge-ccache: clean

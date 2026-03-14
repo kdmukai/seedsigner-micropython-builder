@@ -10,7 +10,7 @@ LOGS_DIR="${LOGS_DIR:-$ROOT_DIR/logs}"
 TS="$(date -u +%Y-%m-%d_%H%M%SZ)"
 LOG_FILE="$LOGS_DIR/${TS}-screenshots.log"
 
-if [ ! -d "$CMODS_DIR/.git" ]; then
+if [ ! -e "$CMODS_DIR/.git" ]; then
   echo "ERROR: expected seedsigner-c-modules repo at: $CMODS_DIR"
   exit 1
 fi
@@ -37,12 +37,12 @@ mkdir -p "$LOGS_DIR"
   echo "Using LVGL_ROOT: $LVGL_ROOT_CANDIDATE"
   cd "$CMODS_DIR"
 
-  cmake -S tests/screenshot_generator -B tests/screenshot_generator/build -DLVGL_ROOT="$LVGL_ROOT_CANDIDATE"
-  cmake --build tests/screenshot_generator/build -j"$(nproc)"
-  ./tests/screenshot_generator/build/screenshot_gen
+  cmake -S tools/screenshot_generator -B tools/screenshot_generator/build -DLVGL_ROOT="$LVGL_ROOT_CANDIDATE"
+  cmake --build tools/screenshot_generator/build -j"$(nproc)"
+  ./tools/screenshot_generator/build/screenshot_gen
 
   echo "Screenshot generation complete."
-  echo "Output root: $CMODS_DIR/tests/screenshot_generator/screenshots"
+  echo "Output root: $CMODS_DIR/tools/screenshot_generator/screenshots"
 } 2>&1 | tee "$LOG_FILE"
 
 echo "Log saved to: $LOG_FILE"

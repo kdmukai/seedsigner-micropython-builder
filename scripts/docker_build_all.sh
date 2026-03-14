@@ -16,7 +16,7 @@ git config --global --add safe.directory /opt/toolchains/esp-idf || true
 mkdir -p sources
 ./scripts/prepare_sources_from_image.sh "$ROOT_DIR/sources"
 
-if [ ! -d "$ROOT_DIR/sources/seedsigner-c-modules/.git" ]; then
+if [ ! -e "$ROOT_DIR/sources/seedsigner-c-modules/.git" ]; then
   git clone https://github.com/kdmukAI-bot/seedsigner-c-modules.git "$ROOT_DIR/sources/seedsigner-c-modules"
 fi
 

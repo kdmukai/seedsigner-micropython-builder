@@ -3,17 +3,12 @@
 /logs/
 /out/
 
-# Local source worktrees cloned/seeded at runtime
-/sources/*
-!/sources/seedsigner-c-modules
-!/sources/micropython
+# Ephemeral source worktrees seeded at build time (not submodules)
+/sources/micropython
 
 # Local tool/cache directories
 /.espressif/
 /.ccache/
-
-# Temporary/local helper scripts
-scripts/run_build_task.sh
 
 # Secrets / credentials
 .env

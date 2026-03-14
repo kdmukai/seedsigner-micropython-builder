@@ -11,27 +11,73 @@ Build orchestration repo for SeedSigner MicroPython firmware without maintaining
 
 ## Cloning and submodule setup
 
-This repo uses git submodules for its source dependencies. After cloning, initialize them:
-
 ```bash
 git clone https://github.com/kdmukAI-bot/seedsigner-micropython-builder.git
 cd seedsigner-micropython-builder
 git submodule update --init --recursive
 ```
 
-The `--recursive` flag is required because `seedsigner-c-modules` contains its own submodule (LVGL).
+The `--recursive` flag is required because `seedsigner-c-modules` contains its own
+submodule (LVGL).
 
-If you've already cloned without `--recursive`, run `git submodule update --init --recursive` from the repo root to fetch everything.
+If you've already cloned without `--recursive`, run
+`git submodule update --init --recursive` from the repo root.
 
-### Submodule layout
+## How `sources/` dependencies are managed
 
-- `sources/micropython` — MicroPython firmware (pinned to a release tag)
-- `sources/seedsigner-c-modules` — SeedSigner C modules (LVGL screens, navigation)
-  - `third_party/lvgl` — LVGL graphics library (nested submodule)
+The `sources/` directory holds the two main source trees needed for the build. They are
+managed differently because they play different roles.
 
-ESP-IDF is expected from the prebaked image path (`/opt/toolchains/esp-idf`) for CI and recommended Docker local runs.
+### `sources/seedsigner-c-modules` — git submodule (version-pinned)
 
-Policy: local development is containerized only. Do not install build toolchains on host machines.
+This is the project's own C module code (LVGL screens, navigation, hardware bindings). It
+is tracked as a **git submodule** so the builder repo records exactly which commit is
+known-good. The build uses it as-is — no patches are applied.
+
+- **Local:** populated by `git submodule update --init --recursive`
+- **CI:** populated by `actions/checkout` with `submodules: true`
+- **Version pin:** the submodule pointer in this repo is the single source of truth
+- **Override:** `workflow_dispatch` accepts an optional `c_modules_ref` input to test a
+  different branch/tag/SHA without changing the pin
+
+### `sources/micropython` — ephemeral build workspace (not a submodule)
+
+MicroPython is an upstream dependency that gets **patched and mutated** during every build.
+The build starts from a clean upstream snapshot, applies the patch series from
+`platform_mods/micropython_mods/patches/`, overlays new files (board definitions,
+partition tables) from `platform_mods/micropython_mods/new_files/`, and compiles the
+result. The modified tree is disposable — it is not committed or version-tracked.
+
+- **Local:** seeded from the prebaked Docker image (`/opt/bases/micropython`) on first run
+  by `scripts/prepare_sources_from_image.sh`. If the directory already exists, it is left
+  as-is.
+- **CI:** same seeding script copies the baseline from the Docker image into `sources/`.
+- **Version pin:** the MicroPython version is pinned by `MICROPYTHON_REF` in `Dockerfile.ghcr`
+  and recorded in `platform_mods/micropython_mods/BASELINE`.
+- **Developer mode:** if the MicroPython tree has uncommitted changes (dirty working tree),
+  `apply_micropython_mods.sh` skips repatching and uses your current tree. This lets you
+  edit MicroPython source directly and iterate without the patch step overwriting your work.
+
+### Why the difference?
+
+| | `seedsigner-c-modules` | `micropython` |
+|---|---|---|
+| Ownership | Project-owned code | Upstream dependency |
+| Modified during build? | No — used as-is | Yes — patched + overlaid |
+| Version tracking | Submodule commit pointer | Docker image `MICROPYTHON_REF` + `BASELINE` file |
+| Working tree after build | Clean | Dirty (patched) |
+
+A submodule implies a stable, tracked pointer — which makes sense for c-modules but not for
+a tree that is immediately mutated. MicroPython's version is pinned in the Docker base image
+and the `BASELINE` file instead.
+
+### ESP-IDF
+
+ESP-IDF is provided by the prebaked Docker image at `/opt/toolchains/esp-idf`. It is not
+stored in `sources/` and is not a submodule.
+
+Policy: local development is containerized only. Do not install build toolchains on host
+machines.
 
 ## Local build (Docker only, GHCR base image)
 
@@ -55,14 +101,16 @@ make docker-build-all
 ```
 
 Notes on default behavior:
-- First run: if `sources/micropython` is missing, it is seeded automatically.
-- Subsequent runs: if `sources/micropython` is dirty, build uses your current working tree and skips auto-repatching.
+- First run: if `sources/micropython` is missing, it is seeded from the Docker image automatically.
+- Subsequent runs: if `sources/micropython` is dirty, the build uses your current working tree and skips repatching.
 
 ## CI
 
 GitHub Actions workflow: `.github/workflows/build-firmware.yml`
 
-It clones required upstream repos into `sources/`, applies mods, builds firmware, and uploads artifacts.
+CI checks out this repo with `submodules: true` (populating `seedsigner-c-modules` at its
+pinned commit), seeds `sources/micropython` from the prebaked Docker image, applies mods,
+builds firmware, and uploads artifacts.
 
 
 ## Build outputs
@@ -123,15 +171,12 @@ idf.py -p /dev/ttyACM0 flash
 
 The workflow supports `workflow_dispatch` with optional inputs:
 
-- `builder_ref` — branch/tag/SHA of this repo (`seedsigner-micropython-builder`) to run.
-- `c_modules_ref` — branch/tag/SHA of `kdmukAI-bot/seedsigner-c-modules` to use.
-
-Defaults:
-
-- `builder_ref = main`
-- `c_modules_ref = main`
+- `builder_ref` — branch/tag/SHA of this repo to run (default: `main`)
+- `c_modules_ref` — branch/tag/SHA of `seedsigner-c-modules` to use (default: blank,
+  meaning the pinned submodule commit)
 
 Use this to test feature branches of either repo without changing default CI behavior.
+Leaving `c_modules_ref` blank builds with whatever commit the submodule points at.
 
 ## Prebuilt base image (GHCR)
 

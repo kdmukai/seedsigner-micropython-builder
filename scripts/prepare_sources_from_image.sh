@@ -7,7 +7,7 @@ WORKDIR="${1:-$ROOT_DIR/sources}"
 
 mkdir -p "$WORKDIR"
 
-if [ ! -d "$WORKDIR/micropython/.git" ]; then
+if [ ! -e "$WORKDIR/micropython/.git" ]; then
   echo "Seeding micropython from prebaked image baseline..."
   cp -a /opt/bases/micropython "$WORKDIR/micropython"
 fi
@@ -25,7 +25,7 @@ if [ -f "$BASELINE_FILE" ]; then
   source "$BASELINE_FILE"
   UPSTREAM_REMOTE="${UPSTREAM_REMOTE:-upstream}"
   UPSTREAM_URL="${UPSTREAM_URL:-https://github.com/micropython/micropython.git}"
-  if [ -d "$WORKDIR/micropython/.git" ]; then
+  if [ -e "$WORKDIR/micropython/.git" ]; then
     if ! git -C "$WORKDIR/micropython" remote get-url "$UPSTREAM_REMOTE" >/dev/null 2>&1; then
       git -C "$WORKDIR/micropython" remote add "$UPSTREAM_REMOTE" "$UPSTREAM_URL"
       echo "Added missing remote '$UPSTREAM_REMOTE' -> $UPSTREAM_URL"
