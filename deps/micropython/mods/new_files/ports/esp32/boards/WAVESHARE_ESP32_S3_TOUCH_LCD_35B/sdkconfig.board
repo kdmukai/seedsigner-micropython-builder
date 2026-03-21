@@ -9,6 +9,18 @@ CONFIG_SPIRAM_TYPE_AUTO=y
 CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_SPIRAM=y
 
+# Disable power management: PM clock gating interferes with SPI display
+# communication. With CONFIG_PM_ENABLE=y (MicroPython default), the APB
+# clock can be scaled down and SPI peripheral clocks gated, causing
+# display transactions to silently fail.
+CONFIG_PM_ENABLE=n
+
+# SPI ISR in IRAM: required for SPI display to work alongside MicroPython
+# flash execution. Without these, SPI transaction interrupts can be blocked
+# by flash cache misses, causing display communication to silently fail.
+CONFIG_SPI_MASTER_ISR_IN_IRAM=y
+CONFIG_SPI_SLAVE_ISR_IN_IRAM=y
+
 # Keep boot strict during bring-up.
 CONFIG_SPIRAM_MEMTEST=y
 CONFIG_SPIRAM_IGNORE_NOTFOUND=n
