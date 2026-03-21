@@ -228,25 +228,49 @@ Run `make docker-build-all` to verify:
 2. After merge, update submodule pin to c-modules `main`
 3. PR the micropython-builder changes
 
-## Follow-up: LVGL v9 Migration (separate PR)
+## Follow-up: LVGL v9 Migration — COMPLETED
 
-After this restructure lands and c-modules PR #12 merges:
+Branch: `feature/lvgl-v9-migration` (PR pending — GitHub account suspended as of 2026-03-20)
 
-1. Update submodule to c-modules `main` (now with v9 screens)
-2. **Delete `ports/esp32/esp_lv_port/`** — replaced by `espressif/esp_lvgl_port` v2.7.2 registry component
-3. **Rewrite `ports/esp32/display_manager/`** for v9:
-   - Use `esp_lvgl_port` for display init (`lvgl_port_add_disp()`)
-   - Touch via `esp_lcd_touch_new_i2c_axs15231b()` + `lvgl_port_add_touch()`
-   - AXS15231B QSPI `direct_mode` flush callback (see migration plan Part 4b)
-   - Public API (`init()`, `run_screen()`) unchanged — bindings need no changes
-4. **Remove custom touch from `ports/esp32/esp_bsp/`** (`bsp_touch.c/h`)
-5. **Update `bindings/micropython.cmake`** — remove `esp_lv_port/include`
-6. **Update MicroPython patch**:
-   - Lock file: LVGL v9.5.0 + `esp_lvgl_port` v2.7.2
-   - `idf_component.yml`: updated dependencies
-   - sdkconfig: remove v8-only options (`LV_COLOR_16_SWAP`, `LV_MEM_CUSTOM`, `LV_TXT_ENC_UTF8`)
+### What was done
 
-See `seedsigner-c-modules/docs/lvgl-v9-migration-plan.md` for full v9 rewrite details.
+1. Updated c-modules submodule to v9 (`2256fbd`)
+2. **Deleted `ports/esp32/esp_lv_port/`** — replaced by `espressif/esp_lvgl_port` v2.7.2
+3. **Rewrote `ports/esp32/display_manager/display_manager.cpp`** for v9
+4. **Deleted custom touch** (`bsp_touch.c/h`) — replaced by `esp_lcd_touch_new_i2c_axs15231b()`
+5. Updated `bindings/micropython.cmake`, `sdkconfig.board`, MicroPython patch
+6. All ESP-IDF component dependencies pinned to exact versions
+
+### Additional changes bundled in the same branch
+
+- **MicroPython as git submodule** — replaced ephemeral Docker copy with submodule at `deps/micropython/upstream` pinned to v1.27.0. Patch script commits after applying for clean dev workflow. Only 3 nested submodules needed: `lib/berkeley-db-1.xx`, `lib/micropython-lib`, `lib/tinyusb`.
+- **Docker cleanup** — `--user` + `--tmpfs /tmp/home` + `~/.cache` bind mount. No root-owned artifacts. Flash package at `build/<board>/flash/`.
+
+### AXS15231B display — critical discoveries
+
+These findings are specific to the Waveshare ESP32-S3 Touch LCD 3.5B (AXS15231B QSPI):
+
+1. **Race condition with `esp_lvgl_port`**: `lvgl_port_add_disp()` registers a default flush callback that sends partial `draw_bitmap` calls. If the LVGL task runs a frame before the custom callback override takes effect, the partial draws corrupt the panel's write pointer (RASET bug). **Fix**: hold `lvgl_port_lock()` across `lvgl_port_add_disp()` and both callback overrides.
+
+2. **`lv_display_set_rotation()` is broken in LVGL v9**: Does not transform rendering coordinates in either `direct_mode` or `full_refresh` mode. Produces a blank screen with a column of random pixels. Tested both modes — neither works.
+
+3. **Rotation must be done in the flush callback**: LVGL renders landscape (480×320) into a SPIRAM framebuffer via `direct_mode`. The flush callback rotates 90° CW to portrait (320×480) while copying into DMA bounce buffers. Byte swap (RGB565 endianness) is done in the same per-pixel loop. Cache-optimized loop order: panel column (px) outer, band row (by) inner — makes SPIRAM reads sequential along framebuffer rows.
+
+4. **Touch mapping**: `swap_xy=1, mirror_x=1, mirror_y=0` with physical portrait `x_max=320, y_max=480`.
+
+5. **LVGL task stack**: 10KB required (was 5KB). Scroll animations + rotation flush callback exceed 5KB stack depth.
+
+6. **Screensaver animation is choppy**: Inherent to the per-pixel rotation overhead (~6ms CPU per frame). Not an issue for SeedSigner's mostly-static UI. Other displays without the RASET bug would not have this limitation.
+
+### Known limitation: rendering performance
+
+The RASET bug forces full-frame DMA on every flush. Combined with software rotation in the flush callback, this adds ~6ms CPU overhead per frame. The `full_refresh` + `lv_display_set_rotation()` approach (which would eliminate the rotation overhead) was tested and does not work due to the v9 rotation bug.
+
+Future optimization options:
+- Cached portrait buffer (only re-rotate dirty bands)
+- Background rotation on second core
+- Custom LVGL draw backend with built-in rotation
+- Accept the tradeoff (SeedSigner UI is mostly static)
 
 ## Risks & Mitigations
 
