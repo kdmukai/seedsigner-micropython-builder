@@ -59,12 +59,19 @@ MICROPY_CMAKE_ARGS="$MICROPY_CMAKE_ARGS -DMICROPY_EXTRA_COMPONENT_DIRS=${PORTS_E
 MICROPY_CMAKE_ARGS="$MICROPY_CMAKE_ARGS -DSEEDSIGNER_C_MODULES_DIR=$CMODS_DIR"
 
 # board_common board config: maps MicroPython board name to board_common board dir.
+# Override with BOARD_CONFIG_DIR env var, or auto-map from BOARD name.
 BOARD_COMMON_DIR="$PORTS_ESP32_DIR/board_common"
-BOARD_CONFIG_DIR="${BOARD_CONFIG_DIR:-$BOARD_COMMON_DIR/boards/waveshare_s3_lcd35b}"
-if [ -d "$BOARD_CONFIG_DIR" ]; then
+if [ -z "${BOARD_CONFIG_DIR:-}" ]; then
+  case "$BOARD" in
+    WAVESHARE_ESP32_S3_TOUCH_LCD_35B) BOARD_CONFIG_DIR="$BOARD_COMMON_DIR/boards/waveshare_s3_lcd35b" ;;
+    WAVESHARE_ESP32_S3_TOUCH_LCD_35)  BOARD_CONFIG_DIR="$BOARD_COMMON_DIR/boards/waveshare_s3_lcd35" ;;
+    *) echo "WARNING: No board_common mapping for BOARD=$BOARD"; BOARD_CONFIG_DIR="" ;;
+  esac
+fi
+if [ -n "$BOARD_CONFIG_DIR" ] && [ -d "$BOARD_CONFIG_DIR" ]; then
   MICROPY_CMAKE_ARGS="$MICROPY_CMAKE_ARGS -DBOARD_CONFIG_DIR=$BOARD_CONFIG_DIR"
 else
-  echo "WARNING: BOARD_CONFIG_DIR not found: $BOARD_CONFIG_DIR"
+  echo "WARNING: BOARD_CONFIG_DIR not found: ${BOARD_CONFIG_DIR:-<unset>}"
 fi
 
 {
