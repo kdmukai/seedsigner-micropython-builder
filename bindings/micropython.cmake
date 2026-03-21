@@ -9,7 +9,6 @@ target_include_directories(usermod_dm INTERFACE
     ${CMAKE_CURRENT_LIST_DIR}
     ${CMAKE_CURRENT_LIST_DIR}/../ports/esp32/display_manager
     ${CMAKE_CURRENT_LIST_DIR}/../ports/esp32/esp_bsp
-    ${CMAKE_CURRENT_LIST_DIR}/../ports/esp32/esp_lv_port/include
     ${SEEDSIGNER_C_MODULES_DIR}/components/seedsigner
 )
 

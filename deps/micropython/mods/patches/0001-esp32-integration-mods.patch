@@ -305,111 +305,6 @@ index d6a4aedb85c681a7e6473dfb8242140b045721bd..bc41c870e0e63280ba268de12f4d07b2
  
  # Collect all of the include directories and compile definitions for the IDF components,
  # including those added by the IDF Component Manager via idf_components.yaml.
-diff --git a/ports/esp32/lockfiles/dependencies.lock.esp32s3 b/ports/esp32/lockfiles/dependencies.lock.esp32s3
-index 0b8b8e92bd57be43ab5fd3e13bbffbf89bc7529f..fe47c55000aece14fcf067f2ffb3b40dc5c0e884 100644
---- a/ports/esp32/lockfiles/dependencies.lock.esp32s3
-+++ b/ports/esp32/lockfiles/dependencies.lock.esp32s3
-@@ -1,4 +1,76 @@
- dependencies:
-+  espressif/cmake_utilities:
-+    component_hash: 351350613ceafba240b761b4ea991e0f231ac7a9f59a9ee901f751bddc0bb18f
-+    dependencies:
-+    - name: idf
-+      require: private
-+      version: '>=4.1'
-+    source:
-+      registry_url: https://components.espressif.com
-+      type: service
-+    version: 0.5.3
-+  espressif/esp_codec_dev:
-+    component_hash: 0d9e9bc288156eb55f79338d312e1ebf8c9dfbd5e7d13ef0f20ccb031b4e15cf
-+    dependencies:
-+    - name: idf
-+      require: private
-+      version: '>=4.0'
-+    source:
-+      registry_url: https://components.espressif.com/
-+      type: service
-+    version: 1.5.4
-+  espressif/esp_io_expander:
-+    component_hash: 034903704f65e3994d7cce9d080b19d89525cf6d416574b932826adf680f3942
-+    dependencies:
-+    - name: idf
-+      require: private
-+      version: '>=4.4.2'
-+    source:
-+      registry_url: https://components.espressif.com
-+      type: service
-+    version: 1.2.0
-+  espressif/esp_io_expander_tca9554:
-+    component_hash: ee94a439ade1c17129a491efe572c600899306a2ffadbde491852d95333e28b4
-+    dependencies:
-+    - name: espressif/esp_io_expander
-+      registry_url: https://components.espressif.com
-+      require: public
-+      version: ^1.2.0
-+    - name: idf
-+      require: private
-+      version: '>=5.2'
-+    source:
-+      registry_url: https://components.espressif.com/
-+      type: service
-+    version: 2.0.3
-+  espressif/esp_lcd_axs15231b:
-+    component_hash: e614bd75827e95800e39df1ba9474166060ab26c3807d06df9cc312a27021cda
-+    dependencies:
-+    - name: espressif/cmake_utilities
-+      registry_url: https://components.espressif.com
-+      require: private
-+      version: 0.*
-+    - name: espressif/esp_lcd_touch
-+      registry_url: https://components.espressif.com
-+      require: public
-+      version: ^1
-+    - name: idf
-+      require: private
-+      version: '>5.0.4,!=5.1.1'
-+    source:
-+      registry_url: https://components.espressif.com/
-+      type: service
-+    version: 1.0.1~1
-+  espressif/esp_lcd_touch:
-+    component_hash: 3f85a7d95af876f1a6ecca8eb90a81614890d0f03a038390804e5a77e2caf862
-+    dependencies:
-+    - name: idf
-+      require: private
-+      version: '>=4.4.2'
-+    source:
-+      registry_url: https://components.espressif.com/
-+      type: service
-+    version: 1.2.1
-   espressif/mdns:
-     component_hash: 46ee81d32fbf850462d8af1e83303389602f6a6a9eddd2a55104cb4c063858ed
-     dependencies:
-@@ -28,10 +100,22 @@ dependencies:
-     source:
-       type: idf
-     version: 5.5.1
-+  lvgl/lvgl:
-+    component_hash: d7c1ac037ae6e85d94897f807d6e7ba0946a83e720074fc95a4f6241da9f9f53
-+    dependencies: []
-+    source:
-+      registry_url: https://components.espressif.com/
-+      type: service
-+    version: 8.4.0
- direct_dependencies:
-+- espressif/esp_codec_dev
-+- espressif/esp_io_expander_tca9554
-+- espressif/esp_lcd_axs15231b
-+- espressif/esp_lcd_touch
- - espressif/mdns
- - espressif/tinyusb
- - idf
--manifest_hash: 482087bc40f0e187795a9ef9ad08ef15a585b4cdabc296c715a9d19284622150
-+- lvgl/lvgl
-+manifest_hash: e227e755a7bca218ff1ea701c369cc7534499aac16d6a0392e2ff3a79ab7109a
- target: esp32s3
- version: 2.0.0
 diff --git a/ports/esp32/main/CMakeLists.txt b/ports/esp32/main/CMakeLists.txt
 index 40188abff8e5770ab1d3dc61ba3ecf2162a91385..91305f8cceb08e68b8af6802f72c6e7c55a6ff14 100644
 --- a/ports/esp32/main/CMakeLists.txt
@@ -432,13 +327,15 @@ diff --git a/ports/esp32/main/idf_component.yml b/ports/esp32/main/idf_component
 index 176e29c3c486212c3178267093623aa28f4a5835..0ac3b96e7683020a9e298a305a3100955d60a774 100644
 --- a/ports/esp32/main/idf_component.yml
 +++ b/ports/esp32/main/idf_component.yml
-@@ -1,5 +1,9 @@
+@@ -1,5 +1,11 @@
  dependencies:
-+  espressif/esp_lcd_touch: "^1.1.2"
-+  espressif/esp_io_expander_tca9554: "^2.0.2"
-+  espressif/esp_codec_dev: "^1.3.1"
++  lvgl/lvgl: "9.5.0"
++  espressif/esp_lvgl_port: "2.7.2"
++  espressif/esp_lcd_touch: "1.2.1"
++  espressif/esp_io_expander_tca9554: "2.0.3"
++  espressif/esp_codec_dev: "1.5.4"
++  espressif/esp_lcd_axs15231b: "2.1.0"
    espressif/mdns: "~1.1.0"
-+  espressif/esp_lcd_axs15231b: "^1.0.0"
    espressif/tinyusb:
      rules:
        - if: "target in [esp32s2, esp32s3, esp32p4]"

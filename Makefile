@@ -1,29 +1,25 @@
-.PHONY: docker-shell docker-build-all clean clean-purge-ccache full-reset
+.PHONY: docker-shell docker-build-all clean clean-purge-cache full-reset
 
 # Local dev uses the same prebaked GHCR image as CI.
 # Override IMAGE if you need a pinned tag.
 IMAGE ?= ghcr.io/kdmukai-bot/seedsigner-micropython-builder-base:latest
 
+DOCKER_RUN = docker run --rm \
+	--user $(shell id -u):$(shell id -g) \
+	-e HOME=/tmp/home \
+	-v $(PWD):/workspace/seedsigner-micropython-builder \
+	--tmpfs /tmp/home:uid=$(shell id -u),gid=$(shell id -g) \
+	-v $(HOME)/.cache:/tmp/home/.cache \
+	-w /workspace/seedsigner-micropython-builder
+
 docker-shell:
-	docker run --rm -it \
-		--user $(shell id -u):$(shell id -g) \
-		-e HOME=/tmp/home \
-		-e XDG_CACHE_HOME=/tmp/home/.cache \
-		-v $(PWD):/workspace/seedsigner-micropython-builder \
-		-v $(PWD)/.ccache:/tmp/home/.cache \
-		-w /workspace/seedsigner-micropython-builder \
-		$(IMAGE) bash
+	@mkdir -p $(HOME)/.cache
+	$(DOCKER_RUN) -it $(IMAGE) bash
 
 # One-liner: setup + firmware build + screenshot build inside Docker
 docker-build-all:
-	docker run --rm -t \
-		--user $(shell id -u):$(shell id -g) \
-		-e HOME=/tmp/home \
-		-e XDG_CACHE_HOME=/tmp/home/.cache \
-		-v $(PWD):/workspace/seedsigner-micropython-builder \
-		-v $(PWD)/.ccache:/tmp/home/.cache \
-		-w /workspace/seedsigner-micropython-builder \
-		$(IMAGE) bash -lc './scripts/docker_build_all.sh'
+	@mkdir -p $(HOME)/.cache
+	$(DOCKER_RUN) -t $(IMAGE) bash -lc './scripts/docker_build_all.sh'
 
 # Safe clean: remove generated build outputs only (keeps deps/ working trees)
 clean:
@@ -33,11 +29,7 @@ clean:
 		deps/micropython/upstream/ports/esp32/build* \
 		deps/seedsigner-c-modules/tools/screenshot_generator/build
 
-# Deeper clean: clean + purge local ccache
-clean-purge-ccache: clean
-	rm -rf .ccache
-
-# Destructive reset: removes deps/ ephemeral clones and all generated artifacts.
+# Destructive reset: removes all generated artifacts and resets submodule working trees.
 # Requires explicit confirmation to avoid accidental loss of in-progress work.
 full-reset:
 	@if [ "$(CONFIRM)" != "YES" ]; then \
@@ -45,4 +37,7 @@ full-reset:
 		echo "Run: make full-reset CONFIRM=YES"; \
 		exit 1; \
 	fi
-	rm -rf deps/micropython/upstream build logs .ccache
+	rm -rf build logs
+	git -C deps/micropython/upstream checkout -- .
+	git -C deps/micropython/upstream clean -fd
+	git -C deps/micropython/upstream submodule foreach --recursive 'git checkout -- . 2>/dev/null; git clean -fd 2>/dev/null' || true

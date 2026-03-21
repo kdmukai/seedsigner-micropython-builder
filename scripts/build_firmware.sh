@@ -76,6 +76,18 @@ MICROPY_CMAKE_ARGS="$MICROPY_CMAKE_ARGS -DSEEDSIGNER_C_MODULES_DIR=$CMODS_DIR"
 
   echo "Build complete. Artifacts:"
   ls -lh "$BUILD_DIR"/micropython.bin "$BUILD_DIR"/micropython.elf "$BUILD_DIR"/flash_args
+
+  # Package flash-ready files for easy download/flashing.
+  FLASH_DIR="$BUILD_DIR/flash"
+  rm -rf "$FLASH_DIR"
+  mkdir -p "$FLASH_DIR/bootloader" "$FLASH_DIR/partition_table"
+  cp "$BUILD_DIR"/flash_args "$FLASH_DIR/"
+  cp "$BUILD_DIR"/micropython.bin "$FLASH_DIR/"
+  cp "$BUILD_DIR"/bootloader/bootloader.bin "$FLASH_DIR/bootloader/"
+  cp "$BUILD_DIR"/partition_table/partition-table.bin "$FLASH_DIR/partition_table/"
+  echo "Flash package: $FLASH_DIR"
+  echo "  Flash with: python -m esptool --chip esp32s3 write_flash @flash_args"
+  ls -lhR "$FLASH_DIR"
 } 2>&1 | tee "$BUILD_LOG"
 
 echo "Log saved to: $BUILD_LOG"

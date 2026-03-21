@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # Expected layout under builder root:
-#   <builder>/deps/micropython/upstream
-#   <builder>/deps/seedsigner-c-modules
+#   <builder>/deps/micropython/upstream   (git submodule)
+#   <builder>/deps/seedsigner-c-modules   (git submodule)
 #   <builder>/deps/micropython/mods/
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,12 +21,16 @@ if [ ! -e "$MP_DIR/.git" ]; then
   exit 1
 fi
 
-# Developer mode default: if MicroPython tree is dirty, leave it as-is and skip patch apply.
-if [ -n "$(git -C "$MP_DIR" status --porcelain)" ]; then
-  echo "MicroPython tree is dirty; skipping micropython_mods patch apply and using current working tree."
-  cat > "$MP_DIR/.seedsigner-builder.env" <<ENV
-SEEDSIGNER_C_MODULES_DIR=$CMODS_DIR
-ENV
+# Developer mode: if MicroPython tree has uncommitted changes beyond
+# the seedsigner patch commit, leave it as-is for iterative development.
+if [ -n "$(git -C "$MP_DIR" status --porcelain --ignore-submodules)" ]; then
+  echo "MicroPython tree is dirty; skipping patch apply and using current working tree."
+  exit 0
+fi
+
+# Check if the seedsigner patch has already been applied (committed).
+if git -C "$MP_DIR" log --oneline -1 | grep -q "seedsigner-builder: applied patch"; then
+  echo "Seedsigner patch already applied; skipping."
   exit 0
 fi
 
@@ -44,13 +48,15 @@ done
 echo "Applying new file overlay from: $NEW_DIR"
 rsync -a "$NEW_DIR/" "$MP_DIR/"
 
-cat > "$MP_DIR/.seedsigner-builder.env" <<ENV
-SEEDSIGNER_C_MODULES_DIR=$CMODS_DIR
-ENV
+# Commit the patch result so developer changes are cleanly separated.
+# `git diff` will show only dev changes; `git diff HEAD~1` shows the full patch.
+git add -A -- ':!lib/'
+git -c user.name="seedsigner-builder" -c user.email="builder@localhost" \
+  commit -m "seedsigner-builder: applied patch series + board overlay" --no-gpg-sign
 
-echo "Done. Staged changes are ready for review:"
-git status -sb
+echo "Done. Patch committed in submodule:"
+git log --oneline -1
 
 echo
-echo "Saved helper env file: $MP_DIR/.seedsigner-builder.env"
-echo "Next: source ESP-IDF env, then build with USER_C_MODULES=$ROOT_DIR/usercmodule.cmake"
+echo "To iterate: edit files, rebuild. Your changes will be on top of this commit."
+echo "To regenerate patch: git -C deps/micropython/upstream diff HEAD~1 > deps/micropython/mods/patches/0001-esp32-integration-mods.patch"

@@ -1,3 +1,6 @@
 [submodule "deps/seedsigner-c-modules"]
 	path = deps/seedsigner-c-modules
 	url = https://github.com/kdmukAI-bot/seedsigner-c-modules.git
+[submodule "micropython"]
+	path = deps/micropython/upstream
+	url = https://github.com/micropython/micropython.git

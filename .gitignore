@@ -1,14 +1,12 @@
 # Local build outputs
 /build/
 /logs/
-/out/
 
-# Ephemeral source worktrees seeded at build time (not submodules)
-/deps/micropython/upstream
+# Build outputs
+/deps/micropython/upstream/ports/esp32/build*
 
 # Local tool/cache directories
 /.espressif/
-/.ccache/
 
 # Secrets / credentials
 .env
