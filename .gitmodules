@@ -4,3 +4,6 @@
 [submodule "micropython"]
 	path = deps/micropython/upstream
 	url = https://github.com/micropython/micropython.git
+[submodule "ports/esp32/board_common"]
+	path = ports/esp32/board_common
+	url = /home/kdmukai/dev/esp-board-common
