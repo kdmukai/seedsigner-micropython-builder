@@ -8,7 +8,7 @@ target_sources(usermod_dm INTERFACE
 target_include_directories(usermod_dm INTERFACE
     ${CMAKE_CURRENT_LIST_DIR}
     ${CMAKE_CURRENT_LIST_DIR}/../ports/esp32/display_manager
-    ${CMAKE_CURRENT_LIST_DIR}/../ports/esp32/board_common
+    ${CMAKE_CURRENT_LIST_DIR}/../ports/esp32/board_common/src
     ${SEEDSIGNER_C_MODULES_DIR}/components/seedsigner
 )
 
