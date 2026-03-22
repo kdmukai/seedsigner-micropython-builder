@@ -1,5 +1,6 @@
 # Local build outputs
 /build/
+/dist/
 /logs/
 
 # Build outputs

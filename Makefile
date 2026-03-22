@@ -1,4 +1,4 @@
-.PHONY: docker-shell docker-build-all clean clean-purge-cache full-reset
+.PHONY: docker-shell docker-build-all dist clean clean-purge-cache full-reset
 
 # Local dev uses the same prebaked GHCR image as CI.
 # Override IMAGE if you need a pinned tag.
@@ -22,10 +22,32 @@ docker-build-all:
 	@mkdir -p $(HOME)/.cache
 	$(DOCKER_RUN) -t $(IMAGE) bash -lc './scripts/docker_build_all.sh'
 
+# Package flash-ready binaries into dist/<BOARD>/ for easy flashing.
+# Requires a prior docker-build-all (or BOARD= docker-build-all) to produce artifacts.
+BOARD ?= WAVESHARE_ESP32_S3_TOUCH_LCD_35B
+DIST_DIR = dist/$(BOARD)
+
+dist:
+	@if [ ! -f build/$(BOARD)/flash_args ]; then \
+		echo "ERROR: No build artifacts for BOARD=$(BOARD). Run: make docker-build-all"; \
+		exit 1; \
+	fi
+	rm -rf $(DIST_DIR)
+	mkdir -p $(DIST_DIR)/bootloader $(DIST_DIR)/partition_table
+	cp build/$(BOARD)/flash_args $(DIST_DIR)/
+	cp build/$(BOARD)/micropython.bin $(DIST_DIR)/
+	cp build/$(BOARD)/bootloader/bootloader.bin $(DIST_DIR)/bootloader/
+	cp build/$(BOARD)/partition_table/partition-table.bin $(DIST_DIR)/partition_table/
+	@CHIP=$$(case "$(BOARD)" in *ESP32_P4*) echo esp32p4;; *) echo esp32s3;; esac); \
+	echo ""; \
+	echo "Flash with:"; \
+	echo "  cd $(DIST_DIR) && python -m esptool --chip $$CHIP write_flash @flash_args"
+
 # Safe clean: remove generated build outputs only (keeps deps/ working trees)
 clean:
 	rm -rf \
 		build \
+		dist \
 		logs \
 		deps/micropython/upstream/ports/esp32/build* \
 		deps/seedsigner-c-modules/tools/screenshot_generator/build
