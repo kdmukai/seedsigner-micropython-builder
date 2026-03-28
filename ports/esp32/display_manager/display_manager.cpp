@@ -9,11 +9,13 @@
 
 #include "board.h"
 #include "board_backlight.h"
+#include "board_config.h"
 #include "esp_lvgl_port.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
 #include "display_manager.h"
+#include "gui_constants.h"
 
 static lv_display_t *lvgl_disp = NULL;
 static lv_indev_t *lvgl_touch_indev = NULL;
@@ -24,6 +26,11 @@ extern "C" void init(void)
     if (initialized) return;
     board_app_config_t cfg = { .landscape = true };
     board_init(&cfg, &lvgl_disp, &lvgl_touch_indev);
+
+    /* Select the display profile that matches this board's resolution.
+     * Landscape mode swaps H/V: LVGL width = V_RES, height = H_RES. */
+    set_display(BOARD_LCD_V_RES, BOARD_LCD_H_RES);
+
     initialized = true;
 }
 

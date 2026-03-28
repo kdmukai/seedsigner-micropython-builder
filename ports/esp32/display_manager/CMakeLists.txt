@@ -19,6 +19,12 @@ target_compile_options(${COMPONENT_LIB} PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-fexceptions>
 )
 
+# Display resolution profile: hardware builds target a single display height to
+# avoid compiling unused font sets.  The seedsigner component checks for at least
+# one SUPPORT_DISPLAY_HEIGHT_* flag at compile time (gui_constants.h).  Setting
+# it PUBLIC here propagates to all components that REQUIRE seedsigner.
+target_compile_definitions(__idf_seedsigner PUBLIC SUPPORT_DISPLAY_HEIGHT_320)
+
 # Debug mode: enables dev-only features (boot splash text, etc.).
 # Pass -DSEEDSIGNER_DEBUG=OFF for production builds.
 option(SEEDSIGNER_DEBUG "Enable debug/dev features" ON)

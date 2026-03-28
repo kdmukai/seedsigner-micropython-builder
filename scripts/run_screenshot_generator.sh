@@ -34,10 +34,17 @@ mkdir -p "$LOGS_DIR"
     exit 1
   fi
 
+  # Resolve to absolute path before cd into submodule dir.
+  LVGL_ROOT_CANDIDATE="$(cd "$LVGL_ROOT_CANDIDATE" && pwd)"
   echo "Using LVGL_ROOT: $LVGL_ROOT_CANDIDATE"
   cd "$CMODS_DIR"
 
-  cmake -S tools/screenshot_generator -B tools/screenshot_generator/build -DLVGL_ROOT="$LVGL_ROOT_CANDIDATE"
+  DISPLAY_WIDTH="${DISPLAY_WIDTH:-480}"
+  DISPLAY_HEIGHT="${DISPLAY_HEIGHT:-320}"
+  cmake -S tools/screenshot_generator -B tools/screenshot_generator/build \
+    -DLVGL_ROOT="$LVGL_ROOT_CANDIDATE" \
+    -DDISPLAY_WIDTH="$DISPLAY_WIDTH" \
+    -DDISPLAY_HEIGHT="$DISPLAY_HEIGHT"
   cmake --build tools/screenshot_generator/build -j"$(nproc)"
   ./tools/screenshot_generator/build/screenshot_gen
 
