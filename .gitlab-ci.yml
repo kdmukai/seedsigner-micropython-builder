@@ -16,6 +16,7 @@ build-firmware:
   image: $BASE_IMAGE
   variables:
     GIT_SUBMODULE_STRATEGY: recursive
+    GIT_SUBMODULE_DEPTH: 1
     IDF_PATH: /opt/toolchains/esp-idf
     IDF_DIR: /opt/toolchains/esp-idf
     IDF_TOOLS_PATH: /opt/espressif
