@@ -1,0 +1,20 @@
+{
+    "deploy": [
+        "../deploy.md"
+    ],
+    "deploy_options": {
+        "flash_offset": "0"
+    },
+    "docs": "",
+    "features": [
+        "External Flash",
+        "External RAM",
+        "WiFi"
+    ],
+    "images": [],
+    "mcu": "esp32p4",
+    "product": "ESP32-P4-WiFi6-Touch-LCD-4.3",
+    "thumbnail": "",
+    "url": "https://www.waveshare.com/wiki/ESP32-P4-WiFi6-Touch-LCD-4.3",
+    "vendor": "Waveshare"
+}

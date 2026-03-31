@@ -66,6 +66,7 @@ if [ -z "${BOARD_CONFIG_DIR:-}" ]; then
     WAVESHARE_ESP32_S3_TOUCH_LCD_35B) BOARD_CONFIG_DIR="$BOARD_COMMON_DIR/boards/waveshare_s3_lcd35b" ;;
     WAVESHARE_ESP32_S3_TOUCH_LCD_35)  BOARD_CONFIG_DIR="$BOARD_COMMON_DIR/boards/waveshare_s3_lcd35" ;;
     WAVESHARE_ESP32_P4_WIFI6_TOUCH_LCD_35) BOARD_CONFIG_DIR="$BOARD_COMMON_DIR/boards/waveshare_p4_lcd35" ;;
+    WAVESHARE_ESP32_P4_WIFI6_TOUCH_LCD_43) BOARD_CONFIG_DIR="$BOARD_COMMON_DIR/boards/waveshare_p4_lcd43" ;;
     *) echo "WARNING: No board_common mapping for BOARD=$BOARD"; BOARD_CONFIG_DIR="" ;;
   esac
 fi
@@ -74,6 +75,16 @@ if [ -n "$BOARD_CONFIG_DIR" ] && [ -d "$BOARD_CONFIG_DIR" ]; then
 else
   echo "WARNING: BOARD_CONFIG_DIR not found: ${BOARD_CONFIG_DIR:-<unset>}"
 fi
+
+# Display height profile: maps board to the SUPPORT_DISPLAY_HEIGHT_* compile flag.
+# Override with SEEDSIGNER_DISPLAY_HEIGHT env var, or auto-map from BOARD name.
+if [ -z "${SEEDSIGNER_DISPLAY_HEIGHT:-}" ]; then
+  case "$BOARD" in
+    WAVESHARE_ESP32_P4_WIFI6_TOUCH_LCD_43) SEEDSIGNER_DISPLAY_HEIGHT=480 ;;
+    *) SEEDSIGNER_DISPLAY_HEIGHT=320 ;;
+  esac
+fi
+MICROPY_CMAKE_ARGS="$MICROPY_CMAKE_ARGS -DSEEDSIGNER_DISPLAY_HEIGHT=$SEEDSIGNER_DISPLAY_HEIGHT"
 
 {
   make -C "$MP_DIR/mpy-cross" USER_C_MODULES= -j"$(nproc)"

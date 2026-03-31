@@ -1,0 +1,27 @@
+# Hardware settings (flash, SPIRAM, MIPI-DSI, PM) are provided by
+# esp-board-common's sdkconfig.defaults via BOARD_CONFIG_DIR.
+# This file contains only MicroPython-specific additions and overrides.
+
+# Keep boot strict during bring-up.
+CONFIG_SPIRAM_MEMTEST=y
+CONFIG_SPIRAM_IGNORE_NOTFOUND=n
+
+# LVGL fonts
+CONFIG_LV_FONT_MONTSERRAT_20=y
+CONFIG_LV_FONT_MONTSERRAT_22=y
+CONFIG_LV_FONT_MONTSERRAT_24=y
+CONFIG_LV_FONT_MONTSERRAT_26=y
+CONFIG_LV_FONT_MONTSERRAT_28=y
+CONFIG_LV_FONT_MONTSERRAT_30=y
+CONFIG_LV_USE_REFR_DEBUG=n
+
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
+
+# Partition table (32MB flash)
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions-32MiB-waveshare.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions-32MiB-waveshare.csv"
+
+# P4 has no built-in Bluetooth.
+CONFIG_BT_ENABLED=n
+
+CONFIG_ESP_ERR_TO_NAME_LOOKUP=n
