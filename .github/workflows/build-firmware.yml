@@ -28,9 +28,15 @@ jobs:
     outputs:
       owner_lc: ${{ steps.owner.outputs.owner_lc }}
     steps:
-      - name: Lowercase GHCR owner
+      - name: Resolve GHCR owner for the base image
         id: owner
-        run: echo "owner_lc=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+        # Standardize on the bot account's public base image regardless of which
+        # owner runs CI (upstream kdmukai or the kdmukai-bot fork). This avoids
+        # each owner having to publish/maintain its own prebaked base image; the
+        # bot builds it (build-base-image.yml) and everyone pulls it. The image
+        # must be public for cross-account pulls to work. Mirrors GitLab/Forgejo,
+        # which already pin the kdmukai-bot registries.
+        run: echo "owner_lc=kdmukai-bot" >> "$GITHUB_OUTPUT"
 
   build:
     if: github.event_name != 'pull_request' || github.event.action != 'closed'
