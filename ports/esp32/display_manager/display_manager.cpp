@@ -30,20 +30,35 @@
 static const char *TAG = "display_manager";
 
 // ---------------------------------------------------------------------------
-// Route tiny_ttf GLYPH BITMAPS to PSRAM.
+// Route LVGL DRAW BUFFERS (tiny_ttf glyph bitmaps + glyph-run masks) to PSRAM.
 //
 // LVGL here runs on its built-in fixed pool (LV_USE_BUILTIN_MALLOC, LV_MEM_SIZE
-// = 64 KB of internal RAM). tiny_ttf's glyph/draw cache (SEEDSIGNER_TTF_CACHE_SIZE
-// = 256) holds rasterized glyph bitmaps — the big allocations — in that pool. Across
-// several screen renders (e.g. switching locales) they exhaust the 64 KB, the next
-// lv_malloc returns NULL, and LVGL's LV_ASSERT_MALLOC busy-loops (while(1)) — the
-// "spin" that wedged the LVGL task and tripped the task WDT on the ru demo.
+// = 64 KB of internal RAM). Two kinds of big bitmap allocations would otherwise
+// land in that tiny pool, both via lv_draw_buf_create()'s handler tables:
+//
+//  1. tiny_ttf's glyph/draw cache (SEEDSIGNER_TTF_CACHE_SIZE = 256) holds rasterized
+//     glyph bitmaps — allocated via the FONT handlers. Across several renders (e.g.
+//     switching locales) they exhaust the 64 KB, the next lv_malloc returns NULL, and
+//     LVGL's LV_ASSERT_MALLOC busy-loops — the "spin" that wedged the LVGL task on ru.
+//
+//  2. The complex-script render layer (glyph_runs.cpp) bakes each shaped label into
+//     an A8 alpha mask via lv_draw_buf_create(), which uses the DEFAULT handlers. A
+//     label keeps its mask for the screen's lifetime, so a 4-label screen holds 4
+//     masks at once. Tall scripts make these huge: Urdu Nastaliq's diagonal baseline
+//     cascade gives a line-height ~2.5x the em, so a single one-line title mask is
+//     ~120 KB (vs ~45 KB for the same text in Devanagari). They never fit the 64 KB
+//     pool, lv_draw_buf_create() returns NULL, bake_run() bails, and the label falls
+//     back to UNSHAPED codepoint text — which for Nastaliq renders as mis-placed
+//     "vertical bars" and (being far wider unshaped) triggers the title scroll anim.
+//     This is why ur was the lone locale broken on-device while it renders correctly
+//     on desktop/Pi-Zero (both back LVGL with unbounded malloc).
 //
 // The fix (per seedsigner-lvgl-screens docs/knowledge/tiny-ttf-cache-spin-root-
-// cause.md): override the FONT draw-buffer handlers so glyph bitmaps come from the
-// 32 MB PSRAM via heap_caps_malloc, instead of the tiny internal pool. Small cache
-// nodes + stb scratch stay in fast internal RAM. Must run after lv_init() (board_init).
-static void *psram_font_buf_malloc(size_t size, lv_color_format_t cf)
+// cause.md): override BOTH handler tables' buf_malloc/free so these bitmaps come from
+// the 32 MB PSRAM via heap_caps_malloc, instead of the tiny internal pool. Small cache
+// nodes + stb scratch + LVGL objects stay in fast internal RAM. Must run after
+// lv_init() (board_init).
+static void *psram_draw_buf_malloc(size_t size, lv_color_format_t cf)
 {
     LV_UNUSED(cf);
     void *p = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -51,17 +66,24 @@ static void *psram_font_buf_malloc(size_t size, lv_color_format_t cf)
     return p;
 }
 
-static void psram_font_buf_free(void *buf)
+static void psram_draw_buf_free(void *buf)
 {
     heap_caps_free(buf);
 }
 
-static void route_font_bitmaps_to_psram(void)
+static void route_draw_buffers_to_psram(void)
 {
+    // Font handlers: tiny_ttf glyph bitmaps (the ru-freeze fix).
     lv_draw_buf_handlers_t *fh = lv_draw_buf_get_font_handlers();
-    fh->buf_malloc_cb = psram_font_buf_malloc;
-    fh->buf_free_cb = psram_font_buf_free;
-    ESP_LOGI(TAG, "tiny_ttf glyph bitmaps routed to PSRAM");
+    fh->buf_malloc_cb = psram_draw_buf_malloc;
+    fh->buf_free_cb = psram_draw_buf_free;
+
+    // Default handlers: lv_draw_buf_create() — the glyph-run A8 masks (the ur fix).
+    lv_draw_buf_handlers_t *dh = lv_draw_buf_get_handlers();
+    dh->buf_malloc_cb = psram_draw_buf_malloc;
+    dh->buf_free_cb = psram_draw_buf_free;
+
+    ESP_LOGI(TAG, "tiny_ttf glyph bitmaps + glyph-run masks routed to PSRAM");
 }
 
 #if BOARD_HAS_SDCARD && defined(CONFIG_IDF_TARGET_ESP32P4)
@@ -96,9 +118,10 @@ extern "C" void init(void)
     board_app_config_t cfg = { .landscape = true };
     board_init(&cfg, &lvgl_disp, &lvgl_touch_indev);
 
-    /* Route glyph bitmaps to PSRAM BEFORE set_display() (which rasterizes the
-     * baked Western floor) so even those first bitmaps avoid the 64 KB pool. */
-    route_font_bitmaps_to_psram();
+    /* Route glyph bitmaps + draw-buf masks to PSRAM BEFORE set_display() (which
+     * rasterizes the baked Western floor) so even those first bitmaps avoid the
+     * 64 KB pool. */
+    route_draw_buffers_to_psram();
 
     /* Select the display profile that matches this board's resolution.
      * Landscape mode swaps H/V: LVGL width = V_RES, height = H_RES. */
