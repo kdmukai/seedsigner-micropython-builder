@@ -225,6 +225,28 @@ static mp_obj_t mp_seedsigner_lvgl_button_list_screen(mp_obj_t cfg_obj) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(seedsigner_lvgl_button_list_screen_obj, mp_seedsigner_lvgl_button_list_screen);
 
+static mp_obj_t mp_seedsigner_lvgl_large_icon_status_screen(mp_obj_t cfg_obj) {
+    if (!mp_obj_is_type(cfg_obj, &mp_type_dict)) {
+        mp_raise_TypeError(MP_ERROR_TEXT("large_icon_status_screen expects a dict"));
+    }
+
+    // Pass JSON through mostly unchanged and let screen-side C++ validate.
+    vstr_t json;
+    vstr_init(&json, 256);
+    vstr_add_json_from_obj(&json, cfg_obj);
+
+    const char *err = run_screen(large_icon_status_screen, (void *)json.buf);
+
+    vstr_clear(&json);
+
+    if (err) {
+        mp_raise_msg_varg(&mp_type_ValueError, MP_ERROR_TEXT("%s"), err);
+    }
+
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(seedsigner_lvgl_large_icon_status_screen_obj, mp_seedsigner_lvgl_large_icon_status_screen);
+
 static mp_obj_t mp_seedsigner_lvgl_seed_add_passphrase_screen(mp_obj_t cfg_obj) {
     if (!mp_obj_is_type(cfg_obj, &mp_type_dict)) {
         mp_raise_TypeError(MP_ERROR_TEXT("seed_add_passphrase_screen expects a dict"));
@@ -362,6 +384,7 @@ static const mp_rom_map_elem_t seedsigner_lvgl_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_unload_locale), MP_ROM_PTR(&seedsigner_lvgl_unload_locale_obj) },
     { MP_ROM_QSTR(MP_QSTR_demo_screen), MP_ROM_PTR(&seedsigner_lvgl_demo_screen_obj) },
     { MP_ROM_QSTR(MP_QSTR_button_list_screen), MP_ROM_PTR(&seedsigner_lvgl_button_list_screen_obj) },
+    { MP_ROM_QSTR(MP_QSTR_large_icon_status_screen), MP_ROM_PTR(&seedsigner_lvgl_large_icon_status_screen_obj) },
     { MP_ROM_QSTR(MP_QSTR_seed_add_passphrase_screen), MP_ROM_PTR(&seedsigner_lvgl_seed_add_passphrase_screen_obj) },
     { MP_ROM_QSTR(MP_QSTR_main_menu_screen), MP_ROM_PTR(&seedsigner_lvgl_main_menu_screen_obj) },
     { MP_ROM_QSTR(MP_QSTR_screensaver_screen), MP_ROM_PTR(&seedsigner_lvgl_screensaver_screen_obj) },
