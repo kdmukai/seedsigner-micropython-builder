@@ -37,13 +37,14 @@ EMBIT_SRC = "/home/kdmukai/dev/embit/src/embit"
 SS_DST = "/lib/seedsigner"
 EMBIT_DST = "/lib/embit"
 
-# micropython-lib stdlib modules the import closure needs but stock firmware
-# lacks. This list IS the set the production firmware must freeze into its
-# manifest (the "required frozen packages"); vendoring to /lib is the no-reflash
-# dev equivalent. Each is a single-module package: <name>/<name>.py.
+# micropython-lib stdlib modules the import closure needs. As of the
+# firmware-rebuild milestone, logging + hmac are FROZEN into the board manifest
+# (ports/esp32/boards/.../manifest.py), so the harness no longer vendors them to
+# /lib. STDLIB_DEPS stays here (empty) as the seam for any future not-yet-frozen
+# stdlib dep; each would be a single-module package <name>/<name>.py under the root.
 MPY_LIB_STDLIB = ("/home/kdmukai/dev/seedsigner-micropython-builder/deps/micropython/"
                   "upstream/lib/micropython-lib/python-stdlib")
-STDLIB_DEPS = ["logging", "hmac"]
+STDLIB_DEPS = []  # logging, hmac now frozen into firmware (was: ["logging", "hmac"])
 
 # Dev stopgap: a top-level `secp256k1` module. embit on MicroPython does a bare
 # `import secp256k1` (expecting the native C module); this re-exports embit's
@@ -98,11 +99,11 @@ print('helpers ready')
 IMPORT_SMOKE = r"""
 import sys
 # Pop the app + its FS-vendored deps so an edited file recompiles. Must include
-# the top-level vendored modules (secp256k1 shim, logging, hmac): if only
-# embit.* is popped, the cached secp256k1 shim keeps stale function references
-# to the previous py_secp256k1 and the re-import silently runs old code.
+# the secp256k1 dev shim: if only embit.* is popped, the cached shim keeps stale
+# function references to the previous py_secp256k1 and the re-import silently runs
+# old code. (logging + hmac are frozen into firmware now, so they need no popping.)
 for _m in list(sys.modules):
-    if _m.split('.')[0] in ('seedsigner', 'embit', 'secp256k1', 'logging', 'hmac'):
+    if _m.split('.')[0] in ('seedsigner', 'embit', 'secp256k1'):
         del sys.modules[_m]
 try:
     import seedsigner.controller
@@ -144,8 +145,9 @@ def push_bytes(ser, data, remote, batch_bytes=18000):
 
 
 def ensure_dev_deps(ser):
-    """Vendor the micropython-lib stdlib modules + secp256k1 dev shim to /lib.
-    Cheap and idempotent; keeps import-smoke/run self-contained without a reflash."""
+    """Vendor any not-yet-frozen stdlib deps (STDLIB_DEPS, currently none) + the
+    secp256k1 dev shim to /lib. Cheap and idempotent; keeps import-smoke/run
+    self-contained without a reflash. logging + hmac are frozen into firmware."""
     for name in STDLIB_DEPS:
         src = os.path.join(MPY_LIB_STDLIB, name, name + ".py")
         if not os.path.exists(src):

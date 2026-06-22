@@ -300,8 +300,8 @@ static MP_DEFINE_CONST_FUN_OBJ_0(seedsigner_lvgl_clear_result_queue_obj, mp_seed
 
 // --- Runtime + i18n -------------------------------------------------------
 // Unified cross-platform surface: the shared Python app calls
-// seedsigner_lvgl.init() / .load_locale() / .unload_locale() identically on
-// Pi Zero and ESP32 — no platform branching. The hardware-specific work (and,
+// seedsigner_lvgl_screens.init() / .load_locale() / .unload_locale() identically
+// on Pi Zero and ESP32 — no platform branching. The hardware-specific work (and,
 // here, the SD-card pack provider + LVGL-port locking) lives behind these in
 // display_manager.cpp; the Pi Zero binding implements the same names over its
 // own backend.
@@ -377,7 +377,7 @@ static mp_obj_t mp_seedsigner_lvgl_unload_locale(void) {
 static MP_DEFINE_CONST_FUN_OBJ_0(seedsigner_lvgl_unload_locale_obj, mp_seedsigner_lvgl_unload_locale);
 
 static const mp_rom_map_elem_t seedsigner_lvgl_module_globals_table[] = {
-    { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_seedsigner_lvgl) },
+    { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_seedsigner_lvgl_screens) },
     { MP_ROM_QSTR(MP_QSTR_init), MP_ROM_PTR(&seedsigner_lvgl_init_obj) },
     { MP_ROM_QSTR(MP_QSTR_locale_pack_files), MP_ROM_PTR(&seedsigner_lvgl_locale_pack_files_obj) },
     { MP_ROM_QSTR(MP_QSTR_load_locale), MP_ROM_PTR(&seedsigner_lvgl_load_locale_obj) },
@@ -398,4 +398,4 @@ const mp_obj_module_t seedsigner_lvgl_user_cmodule = {
     .globals = (mp_obj_dict_t *)&seedsigner_lvgl_module_globals,
 };
 
-MP_REGISTER_MODULE(MP_QSTR_seedsigner_lvgl, seedsigner_lvgl_user_cmodule);
+MP_REGISTER_MODULE(MP_QSTR_seedsigner_lvgl_screens, seedsigner_lvgl_user_cmodule);
