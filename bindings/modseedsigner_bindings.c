@@ -176,15 +176,6 @@ static void vstr_add_json_from_obj(vstr_t *v, mp_obj_t obj) {
     vstr_add_str(v, "null");
 }
 
-static mp_obj_t mp_seedsigner_lvgl_demo_screen(void) {
-    const char *err = run_screen(demo_screen, NULL);
-    if (err) {
-        mp_raise_msg_varg(&mp_type_RuntimeError, MP_ERROR_TEXT("%s"), err);
-    }
-    return mp_const_none;
-}
-static MP_DEFINE_CONST_FUN_OBJ_0(seedsigner_lvgl_demo_screen_obj, mp_seedsigner_lvgl_demo_screen);
-
 static mp_obj_t mp_seedsigner_lvgl_main_menu_screen(void) {
     const char *err = run_screen(main_menu_screen, NULL);
     if (err) {
@@ -382,7 +373,6 @@ static const mp_rom_map_elem_t seedsigner_lvgl_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_locale_pack_files), MP_ROM_PTR(&seedsigner_lvgl_locale_pack_files_obj) },
     { MP_ROM_QSTR(MP_QSTR_load_locale), MP_ROM_PTR(&seedsigner_lvgl_load_locale_obj) },
     { MP_ROM_QSTR(MP_QSTR_unload_locale), MP_ROM_PTR(&seedsigner_lvgl_unload_locale_obj) },
-    { MP_ROM_QSTR(MP_QSTR_demo_screen), MP_ROM_PTR(&seedsigner_lvgl_demo_screen_obj) },
     { MP_ROM_QSTR(MP_QSTR_button_list_screen), MP_ROM_PTR(&seedsigner_lvgl_button_list_screen_obj) },
     { MP_ROM_QSTR(MP_QSTR_large_icon_status_screen), MP_ROM_PTR(&seedsigner_lvgl_large_icon_status_screen_obj) },
     { MP_ROM_QSTR(MP_QSTR_seed_add_passphrase_screen), MP_ROM_PTR(&seedsigner_lvgl_seed_add_passphrase_screen_obj) },

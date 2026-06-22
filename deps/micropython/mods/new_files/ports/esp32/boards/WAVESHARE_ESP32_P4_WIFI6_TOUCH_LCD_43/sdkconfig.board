@@ -15,6 +15,15 @@ CONFIG_LV_FONT_MONTSERRAT_28=y
 CONFIG_LV_FONT_MONTSERRAT_30=y
 CONFIG_LV_USE_REFR_DEBUG=n
 
+# LVGL builtin allocator pool (LV_USE_BUILTIN_MALLOC). Every LVGL object, style,
+# and per-font tiny_ttf glyph cache is allocated from this one fixed internal-DRAM
+# pool. The 64 KB Kconfig default is too small: the app's largest screen (Settings →
+# Advanced, 18 buttons) plus the persistent glyph caches of every font visited in a
+# session peak near the limit, so a later allocation can return NULL. The board has
+# ~300 KB of internal DRAM free, so size the pool to clear that peak with headroom
+# while keeping objects/caches in fast internal RAM (only glyph bitmaps go to PSRAM).
+CONFIG_LV_MEM_SIZE_KILOBYTES=128
+
 # i18n language-pack rendering (matches the desktop/Pi-Zero i18n build):
 #  - TINY_TTF: rasterize the OpenSans Western baked floor + loaded pack .ttf at runtime
 #  - FONT_FMT_TXT_LARGE: large glyph tables (CJK subsets exceed the 16-bit offsets)
