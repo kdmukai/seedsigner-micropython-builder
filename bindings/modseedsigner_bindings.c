@@ -306,6 +306,21 @@ static mp_obj_t mp_seedsigner_lvgl_init(void) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(seedsigner_lvgl_init_obj, mp_seedsigner_lvgl_init);
 
+// set_screensaver_timeout(ms) -> None. Hands the idle timeout to the native
+// overlay manager (0 disables the screensaver). The shared Python runner calls
+// this once at startup with Controller's configured activation_ms; the overlay
+// manager's dispatcher (started in init()) then owns the screensaver entirely.
+// dm_* wrapper takes the LVGL-port lock — see display_manager.cpp.
+static mp_obj_t mp_seedsigner_lvgl_set_screensaver_timeout(mp_obj_t ms_obj) {
+    mp_int_t ms = mp_obj_get_int(ms_obj);
+    if (ms < 0) {
+        ms = 0;
+    }
+    dm_set_screensaver_timeout((uint32_t)ms);
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(seedsigner_lvgl_set_screensaver_timeout_obj, mp_seedsigner_lvgl_set_screensaver_timeout);
+
 // locale_pack_files(locale) -> JSON string array of the pack files this locale
 // needs, e.g. '["th.ttf","runs.bin"]' (or '[]' for a baked-floor locale). The
 // MicroPython side reads each of these off the SD card and passes the bytes to
@@ -370,6 +385,7 @@ static MP_DEFINE_CONST_FUN_OBJ_0(seedsigner_lvgl_unload_locale_obj, mp_seedsigne
 static const mp_rom_map_elem_t seedsigner_lvgl_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_seedsigner_lvgl_screens) },
     { MP_ROM_QSTR(MP_QSTR_init), MP_ROM_PTR(&seedsigner_lvgl_init_obj) },
+    { MP_ROM_QSTR(MP_QSTR_set_screensaver_timeout), MP_ROM_PTR(&seedsigner_lvgl_set_screensaver_timeout_obj) },
     { MP_ROM_QSTR(MP_QSTR_locale_pack_files), MP_ROM_PTR(&seedsigner_lvgl_locale_pack_files_obj) },
     { MP_ROM_QSTR(MP_QSTR_load_locale), MP_ROM_PTR(&seedsigner_lvgl_load_locale_obj) },
     { MP_ROM_QSTR(MP_QSTR_unload_locale), MP_ROM_PTR(&seedsigner_lvgl_unload_locale_obj) },

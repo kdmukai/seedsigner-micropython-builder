@@ -26,6 +26,10 @@ bool dm_load_locale(const char *locale, ss_pack_provider_t provider, void *user)
 /* Clear everything dm_load_locale installed and restore the baked Western floor. */
 void dm_unload_locale(void);
 
+/* Set the native screensaver idle timeout in milliseconds (0 disables it).
+ * Wraps overlay_manager_set_screensaver_timeout() in the LVGL-port lock. */
+void dm_set_screensaver_timeout(uint32_t ms);
+
 #ifdef __cplusplus
 }
 #endif
