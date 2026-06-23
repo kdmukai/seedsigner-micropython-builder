@@ -30,6 +30,12 @@ if(NOT DEFINED SEEDSIGNER_DISPLAY_HEIGHT)
 endif()
 target_compile_definitions(__idf_seedsigner PUBLIC SUPPORT_DISPLAY_HEIGHT_${SEEDSIGNER_DISPLAY_HEIGHT})
 
+# The per-font tiny_ttf glyph cache (SEEDSIGNER_TTF_CACHE_SIZE, default 256 in
+# gui_constants.h) is left at its default here: at ~10 bytes/entry it is cheap, and
+# 256 entries comfortably hold a screen's working set so glyphs never thrash/collide.
+# The internal-DRAM pressure this competes for is governed by the LVGL pool size
+# (CONFIG_LV_MEM_SIZE_KILOBYTES in the board sdkconfig), not by shrinking this cache.
+
 # Debug mode: enables dev-only features (boot splash text, etc.).
 # Pass -DSEEDSIGNER_DEBUG=OFF for production builds.
 option(SEEDSIGNER_DEBUG "Enable debug/dev features" ON)

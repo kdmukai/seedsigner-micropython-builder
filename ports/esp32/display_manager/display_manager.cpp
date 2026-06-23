@@ -26,6 +26,7 @@
 #include "display_manager.h"
 #include "gui_constants.h"
 #include "locale_loader.h"    // ss_load_locale / ss_unload_locale (i18n font packs)
+#include "overlay_manager.h"  // overlay_manager_init / _set_screensaver_timeout
 
 static const char *TAG = "display_manager";
 
@@ -127,6 +128,14 @@ extern "C" void init(void)
      * Landscape mode swaps H/V: LVGL width = V_RES, height = H_RES. */
     set_display(BOARD_LCD_V_RES, BOARD_LCD_H_RES);
 
+    /* Start the native overlay manager's dispatcher lv_timer now that the LVGL
+     * display + touch indev exist. This runs once, here in init() — the same
+     * boot-time, pre-REPL, single-threaded window as set_display() above — so it
+     * needs no lvgl_port lock (init() is `initialized`-guarded, never re-entered
+     * from the MicroPython task). The dispatcher then fires inside the esp_lvgl_port
+     * task's lv_timer_handler() and owns the screensaver on its own. */
+    overlay_manager_init();
+
     initialized = true;
 }
 
@@ -226,5 +235,19 @@ extern "C" void dm_unload_locale(void)
         return;
     }
     ss_unload_locale();
+    lvgl_port_unlock();
+}
+
+/* Set the screensaver idle timeout (ms; 0 disables). Called from Python on the
+ * MicroPython task, concurrent with the esp_lvgl_port task — and a 0 here can
+ * dismiss an active saver (loads/deletes screens), so take the LVGL-port lock,
+ * exactly as dm_load_locale/dm_unload_locale do. */
+extern "C" void dm_set_screensaver_timeout(uint32_t ms)
+{
+    if (!lvgl_port_lock(0)) {
+        ESP_LOGE(TAG, "dm_set_screensaver_timeout: display lock unavailable");
+        return;
+    }
+    overlay_manager_set_screensaver_timeout(ms);
     lvgl_port_unlock();
 }

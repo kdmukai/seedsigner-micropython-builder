@@ -176,15 +176,6 @@ static void vstr_add_json_from_obj(vstr_t *v, mp_obj_t obj) {
     vstr_add_str(v, "null");
 }
 
-static mp_obj_t mp_seedsigner_lvgl_demo_screen(void) {
-    const char *err = run_screen(demo_screen, NULL);
-    if (err) {
-        mp_raise_msg_varg(&mp_type_RuntimeError, MP_ERROR_TEXT("%s"), err);
-    }
-    return mp_const_none;
-}
-static MP_DEFINE_CONST_FUN_OBJ_0(seedsigner_lvgl_demo_screen_obj, mp_seedsigner_lvgl_demo_screen);
-
 static mp_obj_t mp_seedsigner_lvgl_main_menu_screen(void) {
     const char *err = run_screen(main_menu_screen, NULL);
     if (err) {
@@ -224,6 +215,28 @@ static mp_obj_t mp_seedsigner_lvgl_button_list_screen(mp_obj_t cfg_obj) {
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(seedsigner_lvgl_button_list_screen_obj, mp_seedsigner_lvgl_button_list_screen);
+
+static mp_obj_t mp_seedsigner_lvgl_large_icon_status_screen(mp_obj_t cfg_obj) {
+    if (!mp_obj_is_type(cfg_obj, &mp_type_dict)) {
+        mp_raise_TypeError(MP_ERROR_TEXT("large_icon_status_screen expects a dict"));
+    }
+
+    // Pass JSON through mostly unchanged and let screen-side C++ validate.
+    vstr_t json;
+    vstr_init(&json, 256);
+    vstr_add_json_from_obj(&json, cfg_obj);
+
+    const char *err = run_screen(large_icon_status_screen, (void *)json.buf);
+
+    vstr_clear(&json);
+
+    if (err) {
+        mp_raise_msg_varg(&mp_type_ValueError, MP_ERROR_TEXT("%s"), err);
+    }
+
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(seedsigner_lvgl_large_icon_status_screen_obj, mp_seedsigner_lvgl_large_icon_status_screen);
 
 static mp_obj_t mp_seedsigner_lvgl_seed_add_passphrase_screen(mp_obj_t cfg_obj) {
     if (!mp_obj_is_type(cfg_obj, &mp_type_dict)) {
@@ -278,8 +291,8 @@ static MP_DEFINE_CONST_FUN_OBJ_0(seedsigner_lvgl_clear_result_queue_obj, mp_seed
 
 // --- Runtime + i18n -------------------------------------------------------
 // Unified cross-platform surface: the shared Python app calls
-// seedsigner_lvgl.init() / .load_locale() / .unload_locale() identically on
-// Pi Zero and ESP32 — no platform branching. The hardware-specific work (and,
+// seedsigner_lvgl_screens.init() / .load_locale() / .unload_locale() identically
+// on Pi Zero and ESP32 — no platform branching. The hardware-specific work (and,
 // here, the SD-card pack provider + LVGL-port locking) lives behind these in
 // display_manager.cpp; the Pi Zero binding implements the same names over its
 // own backend.
@@ -292,6 +305,21 @@ static mp_obj_t mp_seedsigner_lvgl_init(void) {
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(seedsigner_lvgl_init_obj, mp_seedsigner_lvgl_init);
+
+// set_screensaver_timeout(ms) -> None. Hands the idle timeout to the native
+// overlay manager (0 disables the screensaver). The shared Python runner calls
+// this once at startup with Controller's configured activation_ms; the overlay
+// manager's dispatcher (started in init()) then owns the screensaver entirely.
+// dm_* wrapper takes the LVGL-port lock — see display_manager.cpp.
+static mp_obj_t mp_seedsigner_lvgl_set_screensaver_timeout(mp_obj_t ms_obj) {
+    mp_int_t ms = mp_obj_get_int(ms_obj);
+    if (ms < 0) {
+        ms = 0;
+    }
+    dm_set_screensaver_timeout((uint32_t)ms);
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(seedsigner_lvgl_set_screensaver_timeout_obj, mp_seedsigner_lvgl_set_screensaver_timeout);
 
 // locale_pack_files(locale) -> JSON string array of the pack files this locale
 // needs, e.g. '["th.ttf","runs.bin"]' (or '[]' for a baked-floor locale). The
@@ -355,13 +383,14 @@ static mp_obj_t mp_seedsigner_lvgl_unload_locale(void) {
 static MP_DEFINE_CONST_FUN_OBJ_0(seedsigner_lvgl_unload_locale_obj, mp_seedsigner_lvgl_unload_locale);
 
 static const mp_rom_map_elem_t seedsigner_lvgl_module_globals_table[] = {
-    { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_seedsigner_lvgl) },
+    { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_seedsigner_lvgl_screens) },
     { MP_ROM_QSTR(MP_QSTR_init), MP_ROM_PTR(&seedsigner_lvgl_init_obj) },
+    { MP_ROM_QSTR(MP_QSTR_set_screensaver_timeout), MP_ROM_PTR(&seedsigner_lvgl_set_screensaver_timeout_obj) },
     { MP_ROM_QSTR(MP_QSTR_locale_pack_files), MP_ROM_PTR(&seedsigner_lvgl_locale_pack_files_obj) },
     { MP_ROM_QSTR(MP_QSTR_load_locale), MP_ROM_PTR(&seedsigner_lvgl_load_locale_obj) },
     { MP_ROM_QSTR(MP_QSTR_unload_locale), MP_ROM_PTR(&seedsigner_lvgl_unload_locale_obj) },
-    { MP_ROM_QSTR(MP_QSTR_demo_screen), MP_ROM_PTR(&seedsigner_lvgl_demo_screen_obj) },
     { MP_ROM_QSTR(MP_QSTR_button_list_screen), MP_ROM_PTR(&seedsigner_lvgl_button_list_screen_obj) },
+    { MP_ROM_QSTR(MP_QSTR_large_icon_status_screen), MP_ROM_PTR(&seedsigner_lvgl_large_icon_status_screen_obj) },
     { MP_ROM_QSTR(MP_QSTR_seed_add_passphrase_screen), MP_ROM_PTR(&seedsigner_lvgl_seed_add_passphrase_screen_obj) },
     { MP_ROM_QSTR(MP_QSTR_main_menu_screen), MP_ROM_PTR(&seedsigner_lvgl_main_menu_screen_obj) },
     { MP_ROM_QSTR(MP_QSTR_screensaver_screen), MP_ROM_PTR(&seedsigner_lvgl_screensaver_screen_obj) },
@@ -375,4 +404,4 @@ const mp_obj_module_t seedsigner_lvgl_user_cmodule = {
     .globals = (mp_obj_dict_t *)&seedsigner_lvgl_module_globals,
 };
 
-MP_REGISTER_MODULE(MP_QSTR_seedsigner_lvgl, seedsigner_lvgl_user_cmodule);
+MP_REGISTER_MODULE(MP_QSTR_seedsigner_lvgl_screens, seedsigner_lvgl_user_cmodule);
