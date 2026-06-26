@@ -30,6 +30,34 @@ void dm_unload_locale(void);
  * Wraps overlay_manager_set_screensaver_timeout() in the LVGL-port lock. */
 void dm_set_screensaver_timeout(uint32_t ms);
 
+/* Memory instrumentation (docs/font-memory-plan.md, Task D). A plain-C snapshot
+ * of the internal LVGL builtin pool and the ESP-IDF PSRAM/internal heaps, kept
+ * free of lvgl.h / esp_heap_caps.h types so the MicroPython binding can consume
+ * it without pulling those headers into its QSTR-scan include set. Sizes are in
+ * bytes; the *_pct fields are 0..100. The *_min_free fields are each heap's
+ * lowest-ever free size (i.e. its all-time high-water of use). */
+typedef struct {
+    /* LVGL builtin pool (internal DRAM; CONFIG_LV_MEM_SIZE_KILOBYTES). */
+    uint32_t lvgl_total;
+    uint32_t lvgl_free;
+    uint32_t lvgl_free_biggest;
+    uint32_t lvgl_max_used;
+    uint8_t  lvgl_used_pct;
+    uint8_t  lvgl_frag_pct;
+    /* ESP-IDF heaps: free-now + minimum-ever-free (high-water). */
+    uint32_t spiram_free;
+    uint32_t spiram_min_free;
+    uint32_t internal_free;
+    uint32_t internal_min_free;
+} dm_mem_stats_t;
+
+/* Fill *out with a memory snapshot. The LVGL pool read is wrapped in the
+ * LVGL-port lock (lv_mem_monitor walks allocator state the esp_lvgl_port task
+ * mutates concurrently); the heap_caps reads are already thread-safe. If the
+ * lock is unavailable the lvgl_* fields are left zeroed but the heap fields are
+ * still populated. Safe to call with out == NULL (no-op). */
+void dm_mem_stats(dm_mem_stats_t *out);
+
 #ifdef __cplusplus
 }
 #endif

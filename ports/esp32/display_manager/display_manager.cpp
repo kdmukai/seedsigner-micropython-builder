@@ -251,3 +251,40 @@ extern "C" void dm_set_screensaver_timeout(uint32_t ms)
     overlay_manager_set_screensaver_timeout(ms);
     lvgl_port_unlock();
 }
+
+/* Memory instrumentation for the font-memory budget work (font-memory-plan.md,
+ * Task D). The binding builds a dict from this plain-C struct; the lvgl.h /
+ * esp_heap_caps.h dependency stays here rather than leaking into the bindings'
+ * QSTR-scan include set. */
+extern "C" void dm_mem_stats(dm_mem_stats_t *out)
+{
+    if (!out) {
+        return;
+    }
+    *out = dm_mem_stats_t{};
+
+    /* ESP-IDF heaps are internally locked, so read them without the LVGL lock. */
+    out->spiram_free       = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    out->spiram_min_free   = (uint32_t)heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM);
+    out->internal_free     = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    out->internal_min_free = (uint32_t)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
+
+    /* lv_mem_monitor walks the LVGL builtin allocator, which the esp_lvgl_port
+     * task mutates concurrently — take the same lock the other dm_* wrappers do.
+     * If it's unavailable, the lvgl_* fields stay zeroed (heap fields above are
+     * already filled). */
+    if (!lvgl_port_lock(0)) {
+        ESP_LOGE(TAG, "dm_mem_stats: display lock unavailable");
+        return;
+    }
+    lv_mem_monitor_t mon;
+    lv_mem_monitor(&mon);
+    lvgl_port_unlock();
+
+    out->lvgl_total        = (uint32_t)mon.total_size;
+    out->lvgl_free         = (uint32_t)mon.free_size;
+    out->lvgl_free_biggest = (uint32_t)mon.free_biggest_size;
+    out->lvgl_max_used     = (uint32_t)mon.max_used;
+    out->lvgl_used_pct     = mon.used_pct;
+    out->lvgl_frag_pct     = mon.frag_pct;
+}

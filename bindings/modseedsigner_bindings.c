@@ -382,6 +382,50 @@ static mp_obj_t mp_seedsigner_lvgl_unload_locale(void) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(seedsigner_lvgl_unload_locale_obj, mp_seedsigner_lvgl_unload_locale);
 
+// --- Instrumentation ------------------------------------------------------
+// mem_stats() / get_memory_stats() -> dict. Reports the small internal LVGL
+// builtin pool (CONFIG_LV_MEM_SIZE_KILOBYTES — 128 KB on P4-43, 64 KB on S3)
+// alongside the ESP-IDF PSRAM and internal heaps. Glyph bitmaps and complex-
+// script A8 masks are already routed to PSRAM, so what taxes the internal pool
+// is the per-(font,px) cache index nodes, the live widget tree, and stb's
+// rasterization scratch — see docs/font-memory-plan.md (Task D). `lvgl_max_used`
+// is the high-water number to watch after each newly-ported screen and across
+// locale switches; `lvgl_free_biggest` / `lvgl_frag_pct` flag fragmentation
+// (which can crash with free bytes remaining). The two `*_min_free` fields are
+// each heap's lowest-ever free size (high-water of use). Read over serial from
+// the deployed app; keep logging permanent in debug builds so each screen self-
+// reports a regression.
+//
+// The actual LVGL + esp_heap_caps queries live in dm_mem_stats() (display_
+// manager.cpp), which already includes lvgl.h / esp_heap_caps.h and takes the
+// LVGL-port lock. Keeping them there — behind a plain-C struct — avoids pulling
+// those headers into this file, whose includes must resolve during MicroPython's
+// QSTR scan (it sees only the dirs listed in bindings/micropython.cmake, not the
+// transitive ESP-IDF component include paths).
+static mp_obj_t mp_seedsigner_lvgl_mem_stats(void) {
+    dm_mem_stats_t s;
+    dm_mem_stats(&s);
+
+    mp_obj_t d = mp_obj_new_dict(10);
+
+    // LVGL builtin pool (internal DRAM): live occupancy + high-water + fragmentation.
+    mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_lvgl_total), mp_obj_new_int_from_uint(s.lvgl_total));
+    mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_lvgl_free), mp_obj_new_int_from_uint(s.lvgl_free));
+    mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_lvgl_free_biggest), mp_obj_new_int_from_uint(s.lvgl_free_biggest));
+    mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_lvgl_max_used), mp_obj_new_int_from_uint(s.lvgl_max_used));
+    mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_lvgl_used_pct), mp_obj_new_int(s.lvgl_used_pct));
+    mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_lvgl_frag_pct), mp_obj_new_int(s.lvgl_frag_pct));
+
+    // ESP-IDF heaps: free-now + minimum-ever-free (high-water) for PSRAM and internal.
+    mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_spiram_free), mp_obj_new_int_from_uint(s.spiram_free));
+    mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_spiram_min_free), mp_obj_new_int_from_uint(s.spiram_min_free));
+    mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_internal_free), mp_obj_new_int_from_uint(s.internal_free));
+    mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_internal_min_free), mp_obj_new_int_from_uint(s.internal_min_free));
+
+    return d;
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(seedsigner_lvgl_mem_stats_obj, mp_seedsigner_lvgl_mem_stats);
+
 static const mp_rom_map_elem_t seedsigner_lvgl_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_seedsigner_lvgl_screens) },
     { MP_ROM_QSTR(MP_QSTR_init), MP_ROM_PTR(&seedsigner_lvgl_init_obj) },
@@ -396,6 +440,8 @@ static const mp_rom_map_elem_t seedsigner_lvgl_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_screensaver_screen), MP_ROM_PTR(&seedsigner_lvgl_screensaver_screen_obj) },
     { MP_ROM_QSTR(MP_QSTR_poll_for_result), MP_ROM_PTR(&seedsigner_lvgl_poll_for_result_obj) },
     { MP_ROM_QSTR(MP_QSTR_clear_result_queue), MP_ROM_PTR(&seedsigner_lvgl_clear_result_queue_obj) },
+    { MP_ROM_QSTR(MP_QSTR_mem_stats), MP_ROM_PTR(&seedsigner_lvgl_mem_stats_obj) },
+    { MP_ROM_QSTR(MP_QSTR_get_memory_stats), MP_ROM_PTR(&seedsigner_lvgl_mem_stats_obj) },
 };
 static MP_DEFINE_CONST_DICT(seedsigner_lvgl_module_globals, seedsigner_lvgl_module_globals_table);
 
