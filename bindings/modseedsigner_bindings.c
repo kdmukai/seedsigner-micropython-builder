@@ -176,14 +176,25 @@ static void vstr_add_json_from_obj(vstr_t *v, mp_obj_t obj) {
     vstr_add_str(v, "null");
 }
 
-static mp_obj_t mp_seedsigner_lvgl_main_menu_screen(void) {
-    const char *err = run_screen(main_menu_screen, NULL);
+static mp_obj_t mp_seedsigner_lvgl_main_menu_screen(mp_obj_t cfg_obj) {
+    // Display values are ALWAYS supplied by the caller: the app (Python/MicroPython) does the
+    // gettext translation -- falling back to the English msgid -- and passes the result in. So
+    // the contract REQUIRES a dict (localized top_nav.title + 4 button_list labels), exactly like
+    // button_list_screen. The C side keeps internal defaults only as a per-key safety net.
+    if (!mp_obj_is_type(cfg_obj, &mp_type_dict)) {
+        mp_raise_TypeError(MP_ERROR_TEXT("main_menu_screen expects a dict"));
+    }
+    vstr_t json;
+    vstr_init(&json, 256);
+    vstr_add_json_from_obj(&json, cfg_obj);
+    const char *err = run_screen(main_menu_screen, (void *)json.buf);
+    vstr_clear(&json);
     if (err) {
-        mp_raise_msg_varg(&mp_type_RuntimeError, MP_ERROR_TEXT("%s"), err);
+        mp_raise_msg_varg(&mp_type_ValueError, MP_ERROR_TEXT("%s"), err);
     }
     return mp_const_none;
 }
-static MP_DEFINE_CONST_FUN_OBJ_0(seedsigner_lvgl_main_menu_screen_obj, mp_seedsigner_lvgl_main_menu_screen);
+static MP_DEFINE_CONST_FUN_OBJ_1(seedsigner_lvgl_main_menu_screen_obj, mp_seedsigner_lvgl_main_menu_screen);
 
 static mp_obj_t mp_seedsigner_lvgl_screensaver_screen(void) {
     const char *err = run_screen(screensaver_screen, NULL);
@@ -382,6 +393,69 @@ static mp_obj_t mp_seedsigner_lvgl_unload_locale(void) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(seedsigner_lvgl_unload_locale_obj, mp_seedsigner_lvgl_unload_locale);
 
+// --- Instrumentation ------------------------------------------------------
+// mem_stats() / get_memory_stats() -> dict. Reports the small internal LVGL
+// builtin pool (CONFIG_LV_MEM_SIZE_KILOBYTES — 128 KB on P4-43, 64 KB on S3)
+// alongside the ESP-IDF PSRAM and internal heaps. Glyph bitmaps and complex-
+// script A8 masks are already routed to PSRAM, so what taxes the internal pool
+// is the per-(font,px) cache index nodes, the live widget tree, and stb's
+// rasterization scratch — see docs/font-memory-plan.md (Task D). `lvgl_max_used`
+// is the high-water number to watch after each newly-ported screen and across
+// locale switches; `lvgl_free_biggest` / `lvgl_frag_pct` flag fragmentation
+// (which can crash with free bytes remaining). The two `*_min_free` fields are
+// each heap's lowest-ever free size (high-water of use). Read over serial from
+// the deployed app; keep logging permanent in debug builds so each screen self-
+// reports a regression.
+//
+// The actual LVGL + esp_heap_caps queries live in dm_mem_stats() (display_
+// manager.cpp), which already includes lvgl.h / esp_heap_caps.h and takes the
+// LVGL-port lock. Keeping them there — behind a plain-C struct — avoids pulling
+// those headers into this file, whose includes must resolve during MicroPython's
+// QSTR scan (it sees only the dirs listed in bindings/micropython.cmake, not the
+// transitive ESP-IDF component include paths).
+static mp_obj_t mp_seedsigner_lvgl_mem_stats(void) {
+    dm_mem_stats_t s;
+    dm_mem_stats(&s);
+
+    mp_obj_t d = mp_obj_new_dict(16);
+
+    // LVGL builtin pool (internal DRAM): live occupancy + high-water + fragmentation.
+    mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_lvgl_total), mp_obj_new_int_from_uint(s.lvgl_total));
+    mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_lvgl_free), mp_obj_new_int_from_uint(s.lvgl_free));
+    mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_lvgl_free_biggest), mp_obj_new_int_from_uint(s.lvgl_free_biggest));
+    mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_lvgl_max_used), mp_obj_new_int_from_uint(s.lvgl_max_used));
+    mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_lvgl_used_pct), mp_obj_new_int(s.lvgl_used_pct));
+    mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_lvgl_frag_pct), mp_obj_new_int(s.lvgl_frag_pct));
+
+    // ESP-IDF heaps: free-now + minimum-ever-free (high-water) for PSRAM and internal.
+    mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_spiram_free), mp_obj_new_int_from_uint(s.spiram_free));
+    mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_spiram_min_free), mp_obj_new_int_from_uint(s.spiram_min_free));
+    mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_internal_free), mp_obj_new_int_from_uint(s.internal_free));
+    mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_internal_min_free), mp_obj_new_int_from_uint(s.internal_min_free));
+
+    // rb-cache PSRAM routing (Approach A): is the glyph/draw cache index living in
+    // PSRAM, and is the route healthy? rb_psram_fallback should stay 0; with routing
+    // on, lvgl_max_used should no longer climb under CJK and spiram absorbs the load.
+    mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_rb_psram_enabled), mp_obj_new_int_from_uint(s.rb_psram_enabled));
+    mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_rb_psram_alloc), mp_obj_new_int_from_uint(s.rb_psram_alloc_total));
+    mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_rb_psram_free), mp_obj_new_int_from_uint(s.rb_psram_free_total));
+    mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_rb_psram_live_nodes), mp_obj_new_int_from_uint(s.rb_psram_live_nodes));
+    mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_rb_psram_live_bytes), mp_obj_new_int_from_uint(s.rb_psram_live_bytes));
+    mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_rb_psram_fallback), mp_obj_new_int_from_uint(s.rb_psram_fallback_total));
+
+    return d;
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(seedsigner_lvgl_mem_stats_obj, mp_seedsigner_lvgl_mem_stats);
+
+// set_cache_psram(enabled) — runtime A/B toggle for Approach A rb-cache PSRAM
+// routing. Flip off early in a measurement script to reproduce the original
+// in-pool overflow as a control; on (default) for the fix. See dm_set_cache_psram().
+static mp_obj_t mp_seedsigner_lvgl_set_cache_psram(mp_obj_t enabled_obj) {
+    dm_set_cache_psram(mp_obj_is_true(enabled_obj));
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(seedsigner_lvgl_set_cache_psram_obj, mp_seedsigner_lvgl_set_cache_psram);
+
 static const mp_rom_map_elem_t seedsigner_lvgl_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_seedsigner_lvgl_screens) },
     { MP_ROM_QSTR(MP_QSTR_init), MP_ROM_PTR(&seedsigner_lvgl_init_obj) },
@@ -396,6 +470,9 @@ static const mp_rom_map_elem_t seedsigner_lvgl_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_screensaver_screen), MP_ROM_PTR(&seedsigner_lvgl_screensaver_screen_obj) },
     { MP_ROM_QSTR(MP_QSTR_poll_for_result), MP_ROM_PTR(&seedsigner_lvgl_poll_for_result_obj) },
     { MP_ROM_QSTR(MP_QSTR_clear_result_queue), MP_ROM_PTR(&seedsigner_lvgl_clear_result_queue_obj) },
+    { MP_ROM_QSTR(MP_QSTR_mem_stats), MP_ROM_PTR(&seedsigner_lvgl_mem_stats_obj) },
+    { MP_ROM_QSTR(MP_QSTR_get_memory_stats), MP_ROM_PTR(&seedsigner_lvgl_mem_stats_obj) },
+    { MP_ROM_QSTR(MP_QSTR_set_cache_psram), MP_ROM_PTR(&seedsigner_lvgl_set_cache_psram_obj) },
 };
 static MP_DEFINE_CONST_DICT(seedsigner_lvgl_module_globals, seedsigner_lvgl_module_globals_table);
 
