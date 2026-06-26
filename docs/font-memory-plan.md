@@ -261,6 +261,8 @@ the animation/scroll hot path (the plan's one standing concern about A). Byte-bo
 not relieve internal RAM and is not pursued. Per the **P4-design-center** framing, the S3 must not drive any of this.
 
 Root-cause detail: `docs/knowledge/cjk-glyph-cache-pool-overflow.md`. Auto-memory: `project_font_memory_budget`.
+**Implementation design: `docs/approach-a-cache-psram-design.md`** (patch `lv_rb.c` alloc + `lv_mem.c`
+free-guard; the "patch lv_rb not tiny_ttf" rationale and the managed-component delivery hook).
 
 ---
 
