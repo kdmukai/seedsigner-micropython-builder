@@ -30,11 +30,25 @@ if(NOT DEFINED SEEDSIGNER_DISPLAY_HEIGHT)
 endif()
 target_compile_definitions(__idf_seedsigner PUBLIC SUPPORT_DISPLAY_HEIGHT_${SEEDSIGNER_DISPLAY_HEIGHT})
 
-# The per-font tiny_ttf glyph cache (SEEDSIGNER_TTF_CACHE_SIZE, default 256 in
-# gui_constants.h) is left at its default here: at ~10 bytes/entry it is cheap, and
-# 256 entries comfortably hold a screen's working set so glyphs never thrash/collide.
-# The internal-DRAM pressure this competes for is governed by the LVGL pool size
-# (CONFIG_LV_MEM_SIZE_KILOBYTES in the board sdkconfig), not by shrinking this cache.
+# Per-font tiny_ttf glyph-cache cap (SEEDSIGNER_TTF_CACHE_SIZE; default 256 in
+# gui_constants.h). docs/font-memory-plan.md Task E + docs/knowledge/cjk-glyph-cache-
+# pool-overflow.md: at 256 the per-(font,px) cache index overflows the 128 KB LVGL pool
+# under realistic CJK and crashes (LV_ASSERT_MALLOC -> watchdog reboot). cap=64 was
+# TESTED (2026-06-25) and REJECTED: it fits on bytes but the eviction churn fragments
+# the pool (frag 29%, biggest-block collapse) and is unusable alone. The non-fragmenting
+# lever is instance-count dedup (screens Task A). Kept parameterized at the stock 256 to
+# measure dedup cleanly (large cap = minimal churn); sweep DOWN via
+# -DSEEDSIGNER_TTF_CACHE_SIZE=N only as leftover bytes demand — with fewer deduped
+# instances a moderate cap churns/fragments far less than 64 did.
+# UPDATE 2026-06-25: dedup+256 still overflowed; cap=128 barely helped (~5 KB) because the
+# cap controls only 2 of tiny_ttf's 3 caches — the fixed 256-entry kerning cache (now
+# disabled via CONFIG_LV_TINY_TTF_CACHE_KERNING_CNT=0 in the board sdkconfig) was the
+# uncontrolled tenant. Back to stock 256 to measure the kerning-cache removal at low
+# fragmentation; only sweep DOWN again if leftover bytes still demand it.
+if(NOT DEFINED SEEDSIGNER_TTF_CACHE_SIZE)
+    set(SEEDSIGNER_TTF_CACHE_SIZE 256)
+endif()
+target_compile_definitions(__idf_seedsigner PUBLIC SEEDSIGNER_TTF_CACHE_SIZE=${SEEDSIGNER_TTF_CACHE_SIZE})
 
 # Debug mode: enables dev-only features (boot splash text, etc.).
 # Pass -DSEEDSIGNER_DEBUG=OFF for production builds.

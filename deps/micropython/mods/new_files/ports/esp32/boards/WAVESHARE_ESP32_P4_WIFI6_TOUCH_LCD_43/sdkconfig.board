@@ -33,6 +33,16 @@ CONFIG_LV_FONT_FMT_TXT_LARGE=y
 CONFIG_LV_USE_BIDI=y
 CONFIG_LV_USE_ARABIC_PERSIAN_CHARS=y
 
+# tiny_ttf kerning cache: DISABLED. Fonts use LV_FONT_KERNING_NONE, but tiny_ttf still
+# routes the per-glyph default advance through a SEPARATE 256-entry kerning cache whose
+# size ignores SEEDSIGNER_TTF_CACHE_SIZE — pure duplication of node->adv_w (already kept
+# in the glyph cache) on the constrained internal LVGL pool. 0 triggers tiny_ttf's
+# no-cache bypass (compute inline), removing the redundant per-(font,px) index with no
+# functional change. Measured 2026-06-25 as the dominant internal-pool tenant that the
+# cache-size cap could not touch. See docs/font-memory-plan.md Task E + docs/knowledge/
+# cjk-glyph-cache-pool-overflow.md.
+CONFIG_LV_TINY_TTF_CACHE_KERNING_CNT=0
+
 # NB: SD-card long filenames (e.g. zh_Hans_CN/zh_Hans_CN.ttf) are handled by
 # MicroPython's own FAT VFS (lib/oofatfs; MICROPY_FATFS_ENABLE_LFN=1), not
 # ESP-IDF's fatfs — the two can't be linked together (duplicate f_mount/...).
