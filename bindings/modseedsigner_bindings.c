@@ -176,25 +176,43 @@ static void vstr_add_json_from_obj(vstr_t *v, mp_obj_t obj) {
     vstr_add_str(v, "null");
 }
 
-static mp_obj_t mp_seedsigner_lvgl_main_menu_screen(mp_obj_t cfg_obj) {
-    // Display values are ALWAYS supplied by the caller: the app (Python/MicroPython) does the
-    // gettext translation -- falling back to the English msgid -- and passes the result in. So
-    // the contract REQUIRES a dict (localized top_nav.title + 4 button_list labels), exactly like
-    // button_list_screen. The C side keeps internal defaults only as a per-key safety net.
-    if (!mp_obj_is_type(cfg_obj, &mp_type_dict)) {
-        mp_raise_TypeError(MP_ERROR_TEXT("main_menu_screen expects a dict"));
-    }
+// Shared cfg->JSON->run_screen path for the dict-config screens. The cfg arg is
+// OPTIONAL: lvgl_screen_runner.py calls a native screen fn with () when its attrs
+// are None, which would fault a strict 1-arg binding ("takes 1 positional argument
+// but 0 given"). A 0-arg call (or an explicit None) means "no config" -> an empty
+// JSON object; the screen-side C++ then fills its per-key defaults. A supplied arg
+// must still be a dict (the localized title + labels the app passes in). Callers
+// expose this via FUN_OBJ_VAR_BETWEEN(0, 1).
+static mp_obj_t run_cfg_screen(display_manager_ui_callback_t fn, const char *name,
+                               size_t n_args, const mp_obj_t *args) {
     vstr_t json;
     vstr_init(&json, 256);
-    vstr_add_json_from_obj(&json, cfg_obj);
-    const char *err = run_screen(main_menu_screen, (void *)json.buf);
+    if (n_args >= 1 && args[0] != mp_const_none) {
+        if (!mp_obj_is_type(args[0], &mp_type_dict)) {
+            vstr_clear(&json);
+            mp_raise_msg_varg(&mp_type_TypeError, MP_ERROR_TEXT("%s expects a dict"), name);
+        }
+        vstr_add_json_from_obj(&json, args[0]);
+    } else {
+        vstr_add_str(&json, "{}");
+    }
+    const char *err = run_screen(fn, (void *)json.buf);
     vstr_clear(&json);
     if (err) {
         mp_raise_msg_varg(&mp_type_ValueError, MP_ERROR_TEXT("%s"), err);
     }
     return mp_const_none;
 }
-static MP_DEFINE_CONST_FUN_OBJ_1(seedsigner_lvgl_main_menu_screen_obj, mp_seedsigner_lvgl_main_menu_screen);
+
+static mp_obj_t mp_seedsigner_lvgl_main_menu_screen(size_t n_args, const mp_obj_t *args) {
+    // Display values are ALWAYS supplied by the caller in normal use: the app does the
+    // gettext translation -- falling back to the English msgid -- and passes the result
+    // in (localized top_nav.title + 4 button_list labels), exactly like button_list_screen.
+    // The C side keeps internal defaults only as a per-key safety net (and for the 0-arg
+    // runner path; see run_cfg_screen).
+    return run_cfg_screen(main_menu_screen, "main_menu_screen", n_args, args);
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(seedsigner_lvgl_main_menu_screen_obj, 0, 1, mp_seedsigner_lvgl_main_menu_screen);
 
 static mp_obj_t mp_seedsigner_lvgl_screensaver_screen(void) {
     const char *err = run_screen(screensaver_screen, NULL);
@@ -205,71 +223,23 @@ static mp_obj_t mp_seedsigner_lvgl_screensaver_screen(void) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(seedsigner_lvgl_screensaver_screen_obj, mp_seedsigner_lvgl_screensaver_screen);
 
-static mp_obj_t mp_seedsigner_lvgl_button_list_screen(mp_obj_t cfg_obj) {
-    if (!mp_obj_is_type(cfg_obj, &mp_type_dict)) {
-        mp_raise_TypeError(MP_ERROR_TEXT("button_list_screen expects a dict"));
-    }
-
+static mp_obj_t mp_seedsigner_lvgl_button_list_screen(size_t n_args, const mp_obj_t *args) {
     // Pass JSON through mostly unchanged and let screen-side C++ validate.
-    vstr_t json;
-    vstr_init(&json, 256);
-    vstr_add_json_from_obj(&json, cfg_obj);
-
-    const char *err = run_screen(button_list_screen, (void *)json.buf);
-
-    vstr_clear(&json);
-
-    if (err) {
-        mp_raise_msg_varg(&mp_type_ValueError, MP_ERROR_TEXT("%s"), err);
-    }
-
-    return mp_const_none;
+    return run_cfg_screen(button_list_screen, "button_list_screen", n_args, args);
 }
-static MP_DEFINE_CONST_FUN_OBJ_1(seedsigner_lvgl_button_list_screen_obj, mp_seedsigner_lvgl_button_list_screen);
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(seedsigner_lvgl_button_list_screen_obj, 0, 1, mp_seedsigner_lvgl_button_list_screen);
 
-static mp_obj_t mp_seedsigner_lvgl_large_icon_status_screen(mp_obj_t cfg_obj) {
-    if (!mp_obj_is_type(cfg_obj, &mp_type_dict)) {
-        mp_raise_TypeError(MP_ERROR_TEXT("large_icon_status_screen expects a dict"));
-    }
-
+static mp_obj_t mp_seedsigner_lvgl_large_icon_status_screen(size_t n_args, const mp_obj_t *args) {
     // Pass JSON through mostly unchanged and let screen-side C++ validate.
-    vstr_t json;
-    vstr_init(&json, 256);
-    vstr_add_json_from_obj(&json, cfg_obj);
-
-    const char *err = run_screen(large_icon_status_screen, (void *)json.buf);
-
-    vstr_clear(&json);
-
-    if (err) {
-        mp_raise_msg_varg(&mp_type_ValueError, MP_ERROR_TEXT("%s"), err);
-    }
-
-    return mp_const_none;
+    return run_cfg_screen(large_icon_status_screen, "large_icon_status_screen", n_args, args);
 }
-static MP_DEFINE_CONST_FUN_OBJ_1(seedsigner_lvgl_large_icon_status_screen_obj, mp_seedsigner_lvgl_large_icon_status_screen);
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(seedsigner_lvgl_large_icon_status_screen_obj, 0, 1, mp_seedsigner_lvgl_large_icon_status_screen);
 
-static mp_obj_t mp_seedsigner_lvgl_seed_add_passphrase_screen(mp_obj_t cfg_obj) {
-    if (!mp_obj_is_type(cfg_obj, &mp_type_dict)) {
-        mp_raise_TypeError(MP_ERROR_TEXT("seed_add_passphrase_screen expects a dict"));
-    }
-
+static mp_obj_t mp_seedsigner_lvgl_seed_add_passphrase_screen(size_t n_args, const mp_obj_t *args) {
     // Pass JSON through mostly unchanged and let screen-side C++ validate.
-    vstr_t json;
-    vstr_init(&json, 256);
-    vstr_add_json_from_obj(&json, cfg_obj);
-
-    const char *err = run_screen(seed_add_passphrase_screen, (void *)json.buf);
-
-    vstr_clear(&json);
-
-    if (err) {
-        mp_raise_msg_varg(&mp_type_ValueError, MP_ERROR_TEXT("%s"), err);
-    }
-
-    return mp_const_none;
+    return run_cfg_screen(seed_add_passphrase_screen, "seed_add_passphrase_screen", n_args, args);
 }
-static MP_DEFINE_CONST_FUN_OBJ_1(seedsigner_lvgl_seed_add_passphrase_screen_obj, mp_seedsigner_lvgl_seed_add_passphrase_screen);
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(seedsigner_lvgl_seed_add_passphrase_screen_obj, 0, 1, mp_seedsigner_lvgl_seed_add_passphrase_screen);
 
 static mp_obj_t mp_seedsigner_lvgl_poll_for_result(void) {
     if (s_result_count == 0) {
