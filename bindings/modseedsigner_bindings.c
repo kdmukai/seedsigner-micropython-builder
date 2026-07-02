@@ -20,6 +20,7 @@
 typedef enum {
     SEEDSIGNER_EVENT_BUTTON_SELECTED,
     SEEDSIGNER_EVENT_TEXT_ENTERED,
+    SEEDSIGNER_EVENT_QR_BRIGHTNESS,
 } seedsigner_result_kind_t;
 
 typedef struct {
@@ -65,6 +66,15 @@ void seedsigner_lvgl_on_button_selected(uint32_t index, const char *label) {
 // text and a top-nav back-button press.
 void seedsigner_lvgl_on_text_entered(const char *text) {
     seedsigner_result_enqueue(SEEDSIGNER_EVENT_TEXT_ENTERED, 0, text);
+}
+
+// Override the weak default in seedsigner.cpp: qr_display_screen calls this on exit
+// with its final brightness (31..255). Route it through the same queue as a
+// 'qr_brightness' event (brightness carried in the index field) so one poll loop
+// sees the QR screen's exit and its brightness, letting the host persist
+// SETTING__QR_BRIGHTNESS.
+void seedsigner_lvgl_on_qr_brightness(uint8_t brightness) {
+    seedsigner_result_enqueue(SEEDSIGNER_EVENT_QR_BRIGHTNESS, brightness, NULL);
 }
 
 static void vstr_add_json_escaped(vstr_t *v, const char *src, size_t len) {
@@ -214,6 +224,16 @@ static mp_obj_t mp_seedsigner_lvgl_main_menu_screen(size_t n_args, const mp_obj_
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(seedsigner_lvgl_main_menu_screen_obj, 0, 1, mp_seedsigner_lvgl_main_menu_screen);
 
+// The app's opening splash (version, partner band, entrance animation). The
+// Controller runs this at the start of its startup loop; the firmware already
+// showed the centered boot logo (boot_logo_only) at C boot, so the app typically
+// passes logo_already_shown=true and the animation continues from that position —
+// a seamless boot->splash handoff. Reports completion via the poll queue.
+static mp_obj_t mp_seedsigner_lvgl_splash_screen(size_t n_args, const mp_obj_t *args) {
+    return run_cfg_screen(splash_screen, "splash_screen", n_args, args);
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(seedsigner_lvgl_splash_screen_obj, 0, 1, mp_seedsigner_lvgl_splash_screen);
+
 static mp_obj_t mp_seedsigner_lvgl_screensaver_screen(void) {
     const char *err = run_screen(screensaver_screen, NULL);
     if (err) {
@@ -241,6 +261,55 @@ static mp_obj_t mp_seedsigner_lvgl_seed_add_passphrase_screen(size_t n_args, con
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(seedsigner_lvgl_seed_add_passphrase_screen_obj, 0, 1, mp_seedsigner_lvgl_seed_add_passphrase_screen);
 
+// --- Keyboard/entry + QR-display screens (batched native-screen bindings) ------
+// All three screens use the same dict-config shape as button_list_screen: the
+// Python runner passes a cfg dict, run_cfg_screen forwards it as JSON, and the
+// screen-side C++ validates + fills per-key defaults. Text results come back on
+// the shared poll queue (confirm -> on_text_entered; top-nav back -> on_button_selected).
+
+static mp_obj_t mp_seedsigner_lvgl_keyboard_screen(size_t n_args, const mp_obj_t *args) {
+    // Generic keyboard. The Python caller supplies the charset/layout in the cfg,
+    // so this one binding covers dice-roll, coin-flip, BIP85, index-number and
+    // derivation-path entry -- each is just a different keyboard_screen cfg.
+    return run_cfg_screen(keyboard_screen, "keyboard_screen", n_args, args);
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(seedsigner_lvgl_keyboard_screen_obj, 0, 1, mp_seedsigner_lvgl_keyboard_screen);
+
+static mp_obj_t mp_seedsigner_lvgl_seed_mnemonic_entry_screen(size_t n_args, const mp_obj_t *args) {
+    // BIP39 word entry with the live word-match panel; confirms via on_text_entered.
+    return run_cfg_screen(seed_mnemonic_entry_screen, "seed_mnemonic_entry_screen", n_args, args);
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(seedsigner_lvgl_seed_mnemonic_entry_screen_obj, 0, 1, mp_seedsigner_lvgl_seed_mnemonic_entry_screen);
+
+static mp_obj_t mp_seedsigner_lvgl_qr_display_screen(size_t n_args, const mp_obj_t *args) {
+    // Static or animated QR. A static QR is fully described by the cfg; an animated
+    // QR is host-driven -- after this call Python pushes each frame via
+    // qr_display_set_frame() (gated on qr_display_is_tip_active()). Exit + final
+    // brightness arrive on the poll queue (on_button_selected / on_qr_brightness).
+    return run_cfg_screen(qr_display_screen, "qr_display_screen", n_args, args);
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(seedsigner_lvgl_qr_display_screen_obj, 0, 1, mp_seedsigner_lvgl_qr_display_screen);
+
+// qr_display_set_frame(data: bytes-like) -> None. Push the next animated-QR frame
+// into the live qr_display_screen (re-encodes + repaints in place, reusing the
+// cfg's qr_mode). `data` is raw bytes (may be binary, e.g. a CompactSeedQR payload).
+// Safe no-op when no QR screen is active. See the animation contract in seedsigner.h.
+static mp_obj_t mp_seedsigner_lvgl_qr_display_set_frame(mp_obj_t data_obj) {
+    mp_buffer_info_t bufinfo;
+    mp_get_buffer_raise(data_obj, &bufinfo, MP_BUFFER_READ);
+    qr_display_set_frame(bufinfo.buf, bufinfo.len);
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(seedsigner_lvgl_qr_display_set_frame_obj, mp_seedsigner_lvgl_qr_display_set_frame);
+
+// qr_display_is_tip_active() -> bool. True while the brightness tip panel is shown;
+// the host frame driver HOLDS (doesn't call qr_display_set_frame) while true, then
+// restarts the sequence when it clears. False when no QR screen is active.
+static mp_obj_t mp_seedsigner_lvgl_qr_display_is_tip_active(void) {
+    return mp_obj_new_bool(qr_display_is_tip_active());
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(seedsigner_lvgl_qr_display_is_tip_active_obj, mp_seedsigner_lvgl_qr_display_is_tip_active);
+
 static mp_obj_t mp_seedsigner_lvgl_poll_for_result(void) {
     if (s_result_count == 0) {
         return mp_const_none;
@@ -250,9 +319,12 @@ static mp_obj_t mp_seedsigner_lvgl_poll_for_result(void) {
     s_result_head = (s_result_head + 1) % SEEDSIGNER_RESULT_QUEUE_CAP;
     s_result_count--;
 
-    qstr kind = (ev.kind == SEEDSIGNER_EVENT_TEXT_ENTERED)
-        ? MP_QSTR_text_entered
-        : MP_QSTR_button_selected;
+    qstr kind;
+    switch (ev.kind) {
+        case SEEDSIGNER_EVENT_TEXT_ENTERED:  kind = MP_QSTR_text_entered; break;
+        case SEEDSIGNER_EVENT_QR_BRIGHTNESS: kind = MP_QSTR_qr_brightness; break;
+        default:                             kind = MP_QSTR_button_selected; break;
+    }
 
     mp_obj_t out[3];
     out[0] = MP_OBJ_NEW_QSTR(kind);
@@ -436,7 +508,13 @@ static const mp_rom_map_elem_t seedsigner_lvgl_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_button_list_screen), MP_ROM_PTR(&seedsigner_lvgl_button_list_screen_obj) },
     { MP_ROM_QSTR(MP_QSTR_large_icon_status_screen), MP_ROM_PTR(&seedsigner_lvgl_large_icon_status_screen_obj) },
     { MP_ROM_QSTR(MP_QSTR_seed_add_passphrase_screen), MP_ROM_PTR(&seedsigner_lvgl_seed_add_passphrase_screen_obj) },
+    { MP_ROM_QSTR(MP_QSTR_keyboard_screen), MP_ROM_PTR(&seedsigner_lvgl_keyboard_screen_obj) },
+    { MP_ROM_QSTR(MP_QSTR_seed_mnemonic_entry_screen), MP_ROM_PTR(&seedsigner_lvgl_seed_mnemonic_entry_screen_obj) },
+    { MP_ROM_QSTR(MP_QSTR_qr_display_screen), MP_ROM_PTR(&seedsigner_lvgl_qr_display_screen_obj) },
+    { MP_ROM_QSTR(MP_QSTR_qr_display_set_frame), MP_ROM_PTR(&seedsigner_lvgl_qr_display_set_frame_obj) },
+    { MP_ROM_QSTR(MP_QSTR_qr_display_is_tip_active), MP_ROM_PTR(&seedsigner_lvgl_qr_display_is_tip_active_obj) },
     { MP_ROM_QSTR(MP_QSTR_main_menu_screen), MP_ROM_PTR(&seedsigner_lvgl_main_menu_screen_obj) },
+    { MP_ROM_QSTR(MP_QSTR_splash_screen), MP_ROM_PTR(&seedsigner_lvgl_splash_screen_obj) },
     { MP_ROM_QSTR(MP_QSTR_screensaver_screen), MP_ROM_PTR(&seedsigner_lvgl_screensaver_screen_obj) },
     { MP_ROM_QSTR(MP_QSTR_poll_for_result), MP_ROM_PTR(&seedsigner_lvgl_poll_for_result_obj) },
     { MP_ROM_QSTR(MP_QSTR_clear_result_queue), MP_ROM_PTR(&seedsigner_lvgl_clear_result_queue_obj) },
