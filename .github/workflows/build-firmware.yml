@@ -61,21 +61,23 @@ jobs:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.builder_ref || github.ref }}
           submodules: true
 
-      - name: Init nested camera submodules (board_common -> esp-camera-pipeline -> k_quirc)
+      - name: Init nested submodules not covered by non-recursive checkout
         run: |
-          # actions/checkout inits submodules non-recursively, so board_common's
-          # nested esp-camera-pipeline (and its k_quirc) are absent -- but the
-          # ESP-IDF build needs esp-camera-pipeline as a component. Their .gitmodules
-          # use SSH URLs that CI can't authenticate; rewrite to anonymous HTTPS (both
-          # repos are public) and init the board_common subtree recursively (scoped,
-          # so MicroPython's own deep submodules are not pulled).
+          # actions/checkout inits submodules non-recursively, so the nested
+          # submodules two levels down are absent -- and the build needs them:
+          #   board_common -> esp-camera-pipeline -> k_quirc   (ESP-IDF component)
+          #   seedsigner-lvgl-screens -> third_party/lvgl      (screenshot generator)
+          # The camera chain's .gitmodules use SSH URLs CI can't authenticate; rewrite
+          # gitlab/github SSH to anonymous HTTPS (all public). lvgl-screens' nested
+          # URLs are already HTTPS. Scope recursion to these two subtrees so
+          # MicroPython's own deep submodules are not pulled.
           # The workspace repo is owned by a different uid than this step's user and
           # checkout's safe.directory exception only lives under its temporary HOME,
           # so re-add it here or git aborts with "dubious ownership".
           git config --global --add safe.directory '*'
           git config --global url."https://gitlab.com/".insteadOf "git@gitlab.com:"
           git config --global url."https://github.com/".insteadOf "git@github.com:"
-          git submodule update --init --recursive ports/esp32/board_common
+          git submodule update --init --recursive ports/esp32/board_common deps/seedsigner-lvgl-screens
 
       - name: Prepare sources workspace from prebaked image
         run: |
