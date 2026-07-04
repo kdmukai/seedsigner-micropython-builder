@@ -2,9 +2,11 @@
  * camera_entropy — builder-side composition of the image-entropy capture flow,
  * exposed to MicroPython. Mirrors camera_scanner: a single-session singleton that
  * owns the camera preview pipeline, but attaches the cam_pipeline_entropy consumer
- * (SHA-256 chain over live frames) instead of a QR scan_coordinator. No overlay —
- * the live preview renders into the active LVGL screen; the host drives capture /
- * review / reshoot and builds its own on-screen UI.
+ * (SHA-256 chain over live frames) instead of a QR scan_coordinator. Renders the
+ * preview + a two-phase image-entropy overlay (camera_entropy_overlay: PREVIEW shutter
+ * → CONFIRM accept/reshoot) onto its OWN black screen (Option A). The overlay's
+ * controls emit the host's button_selected / topnav_back events, which the Python host
+ * loop maps to capture/cancel (preview) and accept/reshoot (confirm).
  *
  * Flow (host / Python side):
  *     camera_entropy.start()                 # live preview, chaining begins
@@ -41,6 +43,13 @@ const char *cam_entropy_start(const uint8_t *seed_hash, size_t seed_len);
 
 /* Tear down consumer + pipeline. Idempotent. Zeroizes the chain digest + latch. */
 void cam_entropy_stop(void);
+
+/* Supply the overlay's HOST-PROVIDED, already-localized strings (the app's gettext),
+ * BEFORE start() — nothing is hardcoded in the overlay. Either arg may be NULL/empty.
+ * Persists until changed. (The shutter's camera icon is a symbol the overlay supplies.)
+ *   capturing_text — the "Capturing image..." transient
+ *   accept_label   — the CONFIRM accept button */
+void cam_entropy_set_labels(const char *capturing_text, const char *accept_label);
 
 /* True while a capture session is live (between start and stop). */
 bool cam_entropy_is_running(void);

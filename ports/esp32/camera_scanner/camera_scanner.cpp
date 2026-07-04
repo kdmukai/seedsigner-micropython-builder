@@ -42,6 +42,51 @@ static scan_coordinator_t        *s_coord    = NULL;
 static lv_obj_t                  *s_screen   = NULL;
 static bool                       s_running  = false;
 
+/* ── Option A dedicated camera screen ───────────────────────────────────────────
+ * The camera image + overlay render onto their OWN opaque-black screen rather than
+ * over the previously-active one. Loading it immediately means the camera warm-up
+ * window (and, on stop, the teardown→next-load gap) shows black instead of the
+ * screen the user came from — see docs/camera-pipeline-teardown-screen-reveal.md. ── */
+
+/* Create the black cam screen and load it. *out_prev receives the screen that was
+ * active before the swap; the caller deletes it on success (the destination View
+ * rebuilds it fresh on return, per the View-layer contract) or restores it on a
+ * start failure. Returns NULL on alloc failure. Caller must hold the LVGL lock. */
+static lv_obj_t *cam_make_black_screen(lv_obj_t **out_prev)
+{
+    lv_obj_t *prev = lv_screen_active();
+    if (out_prev) {
+        *out_prev = prev;
+    }
+    lv_obj_t *scr = lv_obj_create(NULL);
+    if (!scr) {
+        return NULL;
+    }
+    lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+    lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+    lv_screen_load(scr);
+    return scr;
+}
+
+/* Undo the start-time screen swap when a later start step fails: revert the render
+ * interval, restore the pre-camera screen, and drop our black one, so the caller
+ * sees exactly the state it had before start() was attempted. */
+static void cam_rollback_screen(lv_obj_t *prev_screen)
+{
+    if (lvgl_port_lock(0)) {
+        board_set_render_interval_ms(0);
+        if (prev_screen) {
+            lv_screen_load(prev_screen);
+        }
+        if (s_screen) {
+            lv_obj_delete(s_screen);
+            s_screen = NULL;
+        }
+        lvgl_port_unlock();
+    }
+}
+
 /* ── Injected presenter: maps the neutral scan status to the overlay's visual
  * enum and drives the LVGL widgets. The coordinator already dedups on
  * (status, percent), so this fires only on a real change.
@@ -90,19 +135,25 @@ const char *cam_scanner_start(void)
         return NULL;  /* idempotent */
     }
 
-    /* Capture the active screen under the lock (the camera image + overlay become
-     * its children, so the overlay draws above the live preview). Also set a short
-     * LVGL render interval for a responsive real-time preview, matching the
-     * standalone camera apps (qr_overlay_test, scan_coord_test); reset to 0 in
-     * cam_scanner_stop. (The overlay-lock starvation that used to hang start() is
-     * fixed by flattening the lvgl/CSI task priorities to 1 — see board_common.) */
+    /* Build on our OWN opaque-black screen (Option A) rather than the active one, so
+     * the camera warm-up window shows black instead of the screen the user came from
+     * — the camera image + overlay become its children, so the overlay draws above
+     * the live preview. Also set a short LVGL render interval for a responsive
+     * real-time preview, matching the standalone camera apps (qr_overlay_test,
+     * scan_coord_test); reset to 0 in cam_scanner_stop. (The overlay-lock starvation
+     * that used to hang start() is fixed by flattening the lvgl/CSI task priorities
+     * to 1 — see board_common.) prev_screen is deleted on success / restored on
+     * failure below. */
+    lv_obj_t *prev_screen = NULL;
     if (lvgl_port_lock(0)) {
-        s_screen = lv_screen_active();
-        board_set_render_interval_ms(10);
+        s_screen = cam_make_black_screen(&prev_screen);
+        if (s_screen) {
+            board_set_render_interval_ms(10);
+        }
         lvgl_port_unlock();
     }
     if (!s_screen) {
-        return "no active screen";
+        return "camera screen create failed";
     }
 
     /* Camera preview pipeline: centered square = the shorter logical dimension
@@ -118,6 +169,7 @@ const char *cam_scanner_start(void)
 
     s_pipeline = cam_pipeline_create(&pcfg);
     if (!s_pipeline) {
+        cam_rollback_screen(prev_screen);
         return "pipeline create failed";
     }
 
@@ -143,6 +195,7 @@ const char *cam_scanner_start(void)
     if (!s_overlay) {
         cam_pipeline_destroy(s_pipeline);
         s_pipeline = NULL;
+        cam_rollback_screen(prev_screen);
         return "overlay create failed";
     }
 
@@ -166,7 +219,21 @@ const char *cam_scanner_start(void)
         s_overlay = NULL;
         cam_pipeline_destroy(s_pipeline);
         s_pipeline = NULL;
+        cam_rollback_screen(prev_screen);
         return "scan_coordinator create failed";
+    }
+
+    /* Success: the pre-camera screen is no longer needed — the destination View
+     * rebuilds it fresh when we return (View-layer contract), and the host's
+     * load_screen_and_cleanup_previous only reaps the *active* screen (now ours), so
+     * this orphan would otherwise leak. Delete it deliberately here; our black cam
+     * screen stays active for the whole session and is itself reaped by the host's
+     * next screen load. */
+    if (prev_screen && prev_screen != s_screen) {
+        if (lvgl_port_lock(0)) {
+            lv_obj_delete(prev_screen);
+            lvgl_port_unlock();
+        }
     }
 
     s_running = true;
@@ -203,6 +270,11 @@ void cam_scanner_stop(void)
         board_set_render_interval_ms(0);
         lvgl_port_unlock();
     }
+    /* Option A: leave our black cam screen loaded as the active screen — with the
+     * camera image gone it shows black, covering the teardown→next-load gap so the
+     * pre-camera screen is never revealed. We drop our reference WITHOUT deleting the
+     * object; the host reaps it via load_screen_and_cleanup_previous when the
+     * destination View re-runs and loads its own screen. */
     s_screen = NULL;
     ESP_LOGI(TAG, "scanner stopped");
 }
