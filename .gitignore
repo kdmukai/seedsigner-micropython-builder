@@ -28,6 +28,9 @@ CLAUDE.md
 /device-renders/
 /apps/qr_overlay_test/managed_components/
 
+# Generated on-device benchmark outputs
+/tools/device_scan/*.csv
+
 # Claude Code session state
 /.claude/
 /.claude-auto-commit
