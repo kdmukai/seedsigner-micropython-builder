@@ -52,6 +52,18 @@ static mp_obj_t mp_camera_entropy_stop(void) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(camera_entropy_stop_obj, mp_camera_entropy_stop);
 
+// set_labels(capturing_text, accept_label) -> None. Supply the overlay's localized
+// strings (the app's gettext) BEFORE start() so nothing is hardcoded in the overlay.
+// Either arg may be None. Persists until changed. The shutter's camera icon is a symbol
+// the overlay supplies itself.
+static mp_obj_t mp_camera_entropy_set_labels(mp_obj_t capturing_obj, mp_obj_t accept_obj) {
+    const char *capturing = (capturing_obj == mp_const_none) ? NULL : mp_obj_str_get_str(capturing_obj);
+    const char *accept    = (accept_obj    == mp_const_none) ? NULL : mp_obj_str_get_str(accept_obj);
+    cam_entropy_set_labels(capturing, accept);
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_2(camera_entropy_set_labels_obj, mp_camera_entropy_set_labels);
+
 // is_running() -> bool.
 static mp_obj_t mp_camera_entropy_is_running(void) {
     return mp_obj_new_bool(cam_entropy_is_running());
@@ -102,6 +114,7 @@ static const mp_rom_map_elem_t camera_entropy_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_camera_entropy) },
     { MP_ROM_QSTR(MP_QSTR_start), MP_ROM_PTR(&camera_entropy_start_obj) },
     { MP_ROM_QSTR(MP_QSTR_stop), MP_ROM_PTR(&camera_entropy_stop_obj) },
+    { MP_ROM_QSTR(MP_QSTR_set_labels), MP_ROM_PTR(&camera_entropy_set_labels_obj) },
     { MP_ROM_QSTR(MP_QSTR_is_running), MP_ROM_PTR(&camera_entropy_is_running_obj) },
     { MP_ROM_QSTR(MP_QSTR_frames_chained), MP_ROM_PTR(&camera_entropy_frames_chained_obj) },
     { MP_ROM_QSTR(MP_QSTR_capture), MP_ROM_PTR(&camera_entropy_capture_obj) },
