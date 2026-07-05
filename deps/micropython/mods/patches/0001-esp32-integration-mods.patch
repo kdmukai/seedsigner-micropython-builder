@@ -278,9 +278,10 @@ index 40188abff..57a47b925 100644
 +# Pull in external display stack + camera (scan + entropy) components from
 +# EXTRA_COMPONENT_DIRS. None is reached via the IDF requires graph (the usermod
 +# links them post-hoc), so all must be force-included here to be compiled.
-+# esp-secp256k1 (native libsecp256k1) is the same case: the usermod links
-+# __idf_esp-secp256k1 post-hoc, so force-include it to get compiled.
-+list(APPEND IDF_COMPONENTS display_manager camera_scanner camera_entropy cUR esp-secp256k1)
++# esp-secp256k1 (native libsecp256k1) and esp-hashlib-ext (mbedtls SHA-512 +
++# PBKDF2) are the same case: the usermod links __idf_esp-secp256k1 /
++# __idf_esp-hashlib-ext post-hoc, so force-include them to get compiled.
++list(APPEND IDF_COMPONENTS display_manager camera_scanner camera_entropy cUR esp-secp256k1 esp-hashlib-ext)
 +
 +# Force-exclude network stack components when building offline firmware.
 +if(MICROPY_DISABLE_NETWORK)

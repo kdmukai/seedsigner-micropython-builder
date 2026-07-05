@@ -18,6 +18,10 @@ target_sources(usermod_dm INTERFACE
     # (linked below). Only the public secp256k1.h include dir is added below, so
     # the heavy internal headers stay out of the QSTR scan.
     ${CMAKE_CURRENT_LIST_DIR}/../deps/esp-secp256k1/mpy/modsecp256k1.c
+    # hashlib extension (module `_hashlib_ext`): mbedtls-backed SHA-512 + PBKDF2.
+    # A frozen hashlib.py merges these into the extensible built-in `hashlib`. The
+    # mbedtls math lives in __idf_esp-hashlib-ext (linked below).
+    ${CMAKE_CURRENT_LIST_DIR}/modhashlibext.c
 )
 
 target_include_directories(usermod_dm INTERFACE
@@ -32,6 +36,9 @@ target_include_directories(usermod_dm INTERFACE
     ${CMAKE_CURRENT_LIST_DIR}/../deps/cUR/src
     # secp256k1 public API only (modsecp256k1.c does #include "secp256k1.h").
     ${CMAKE_CURRENT_LIST_DIR}/../deps/esp-secp256k1/secp256k1-zkp/include
+    # hashlib-ext plain-C API only (modhashlibext.c does #include "hashlib_ext.h");
+    # the mbedtls headers stay inside the __idf_esp-hashlib-ext component.
+    ${CMAKE_CURRENT_LIST_DIR}/../deps/esp-hashlib-ext
 )
 
 # Link bindings against ESP-IDF component libs instead of compiling component C++
@@ -45,6 +52,9 @@ target_link_libraries(usermod_dm INTERFACE
     __idf_seedsigner
     __idf_cUR
     __idf_esp-secp256k1
+    # hashlib-ext: mbedtls-backed SHA-512 + PBKDF2 (plain-C lib; mbedtls stays
+    # inside this component, out of the usermod QSTR-scan — same split as cUR/secp).
+    __idf_esp-hashlib-ext
 )
 
 target_link_libraries(usermod INTERFACE usermod_dm)
