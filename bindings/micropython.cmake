@@ -13,6 +13,11 @@ target_sources(usermod_dm INTERFACE
     # MP_REGISTER_MODULE + MP_QSTR_* get QSTR-scanned; it calls the plain-C
     # ur_decoder_*/ur_encoder_* API in __idf_cUR (linked below).
     ${CMAKE_CURRENT_LIST_DIR}/../deps/cUR/uUR.c
+    # Native libsecp256k1 binding (top-level module `secp256k1`; embit imports it
+    # on MicroPython). QSTR-scanned here; the EC math lives in __idf_esp-secp256k1
+    # (linked below). Only the public secp256k1.h include dir is added below, so
+    # the heavy internal headers stay out of the QSTR scan.
+    ${CMAKE_CURRENT_LIST_DIR}/../deps/esp-secp256k1/mpy/modsecp256k1.c
 )
 
 target_include_directories(usermod_dm INTERFACE
@@ -25,6 +30,8 @@ target_include_directories(usermod_dm INTERFACE
     # cUR repo root (uUR.c does #include "src/ur.h") + its src/ dir.
     ${CMAKE_CURRENT_LIST_DIR}/../deps/cUR
     ${CMAKE_CURRENT_LIST_DIR}/../deps/cUR/src
+    # secp256k1 public API only (modsecp256k1.c does #include "secp256k1.h").
+    ${CMAKE_CURRENT_LIST_DIR}/../deps/esp-secp256k1/secp256k1-zkp/include
 )
 
 # Link bindings against ESP-IDF component libs instead of compiling component C++
@@ -37,6 +44,7 @@ target_link_libraries(usermod_dm INTERFACE
     __idf_camera_entropy
     __idf_seedsigner
     __idf_cUR
+    __idf_esp-secp256k1
 )
 
 target_link_libraries(usermod INTERFACE usermod_dm)
