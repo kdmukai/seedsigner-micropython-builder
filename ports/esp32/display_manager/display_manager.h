@@ -2,6 +2,7 @@
 #define DISPLAY_MANAGER_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "locale_loader.h"   /* ss_pack_provider_t */
@@ -25,6 +26,37 @@ bool dm_load_locale(const char *locale, ss_pack_provider_t provider, void *user)
 
 /* Clear everything dm_load_locale installed and restore the baked Western floor. */
 void dm_unload_locale(void);
+
+/* --- Runtime language-pack discovery + locale-picker endonym images ---------
+ * The language-selection screen (locale_picker_screen) and "copy a pack onto the
+ * SD card, no firmware rebuild" flow. Like dm_load_locale, the per-host piece is
+ * acquiring pack bytes: on MicroPython the binding reads the packs partition in
+ * Python (machine.SDCard; the ESP-IDF FAT stack can't be linked alongside
+ * MicroPython's own FAT VFS) and supplies the bytes through the seams below.
+ * See docs/language-selection-integration-todo.md and the screens repo's
+ * docs/knowledge/locale-picker-and-endonym-images.md. */
+
+/* JSON manifest of every locale the firmware can render as a pack — compiled-in
+ * fonts UNION runtime-registered SD packs — for the ACTIVE display profile (in
+ * supported_locales_json() shape). A baked-floor Latin locale (English, ...) is
+ * NOT listed (it needs no pack). Returns a pointer to a static buffer, valid
+ * until the next call. Wraps the render-layer read in the LVGL-port lock. */
+const char *dm_supported_locales_json(void);
+
+/* Register a runtime language pack from its own manifest.json bytes (a pack whose
+ * code is not compiled in), so ss_load_locale / dm_supported_locales_json then
+ * serve it with no rebuild. FAILS CLOSED: returns false on malformed JSON or a
+ * missing required field, registering nothing. See ss_register_pack_manifest(). */
+bool dm_register_pack_manifest(const char *manifest_json, size_t len);
+
+/* Drop every runtime-registered pack (e.g. before an SD rescan). */
+void dm_clear_pack_manifests(void);
+
+/* Point the locale picker at the byte provider it uses to fetch endonym images —
+ * the SAME seam/signature as dm_load_locale's provider. Set before running
+ * locale_picker_screen; pass NULL to disable image rows (they fall back to their
+ * live text). See locale_picker_set_image_provider(). */
+void dm_set_endonym_image_provider(ss_pack_provider_t provider, void *user);
 
 /* Set the native screensaver idle timeout in milliseconds (0 disables it).
  * Wraps overlay_manager_set_screensaver_timeout() in the LVGL-port lock. */

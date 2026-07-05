@@ -6,6 +6,7 @@
  * run_screen() C functions that the MicroPython bindings call.
  */
 #include <exception>
+#include <string>
 
 #include "board.h"
 #include "board_backlight.h"
@@ -25,7 +26,9 @@
 
 #include "display_manager.h"
 #include "gui_constants.h"
+#include "locale_fonts.h"     // supported_locales_json (compiled + runtime locale set)
 #include "locale_loader.h"    // ss_load_locale / ss_unload_locale (i18n font packs)
+#include "locale_picker.h"    // locale_picker_set_image_provider (endonym images)
 #include "overlay_manager.h"  // overlay_manager_init / _set_screensaver_timeout
 #include "seedsigner.h"       // splash_screen (boot_logo_only) for the C-boot logo
 
@@ -250,6 +253,56 @@ extern "C" void dm_unload_locale(void)
     }
     ss_unload_locale();
     lvgl_port_unlock();
+}
+
+/* --- Runtime language-pack discovery + locale-picker endonym images ---------
+ * dm_supported_locales_json / dm_register_pack_manifest / dm_clear_pack_manifests
+ * touch the render layer's compiled+runtime locale table, which ss_load_locale
+ * (above, under the lock) also reads. All three are driven from the MicroPython
+ * task, but take the LVGL-port lock anyway so a table read/write is serialized
+ * against a concurrent load — same discipline as dm_load_locale/dm_unload_locale.
+ * dm_set_endonym_image_provider only stores two pointers the picker reads later
+ * (during locale_picker_screen, itself run under the lock via run_screen), so it
+ * needs no lock — matching dm_set_cache_psram. */
+
+extern "C" const char *dm_supported_locales_json(void)
+{
+    // Held in a static string; the binding copies it into a Python str before the
+    // next call (same lifetime contract as ss_locale_pack_files()).
+    static std::string cached;
+    if (!lvgl_port_lock(0)) {
+        ESP_LOGE(TAG, "dm_supported_locales_json: display lock unavailable");
+        return "{}";
+    }
+    cached = supported_locales_json();
+    lvgl_port_unlock();
+    return cached.c_str();
+}
+
+extern "C" bool dm_register_pack_manifest(const char *manifest_json, size_t len)
+{
+    if (!lvgl_port_lock(0)) {
+        ESP_LOGE(TAG, "dm_register_pack_manifest: display lock unavailable");
+        return false;
+    }
+    bool ok = ss_register_pack_manifest(manifest_json, len);
+    lvgl_port_unlock();
+    return ok;
+}
+
+extern "C" void dm_clear_pack_manifests(void)
+{
+    if (!lvgl_port_lock(0)) {
+        ESP_LOGE(TAG, "dm_clear_pack_manifests: display lock unavailable");
+        return;
+    }
+    ss_clear_pack_manifests();
+    lvgl_port_unlock();
+}
+
+extern "C" void dm_set_endonym_image_provider(ss_pack_provider_t provider, void *user)
+{
+    locale_picker_set_image_provider(provider, user);
 }
 
 /* Set the screensaver idle timeout (ms; 0 disables). Called from Python on the
