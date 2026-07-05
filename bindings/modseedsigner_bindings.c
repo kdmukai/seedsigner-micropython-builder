@@ -479,6 +479,145 @@ static mp_obj_t mp_seedsigner_lvgl_unload_locale(void) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(seedsigner_lvgl_unload_locale_obj, mp_seedsigner_lvgl_unload_locale);
 
+// --- Locale picker + runtime SD-card pack discovery -----------------------
+// The language-selection screen and the "copy a pack onto the SD card, no
+// firmware rebuild" flow. The C loader can't open the SD directly (the ESP-IDF
+// FAT stack can't be linked alongside MicroPython's own FAT VFS), so the shared
+// Python app lists the packs partition, reads each manifest.json + endonym blob
+// via machine.SDCard, and drives these. See docs/language-selection-integration-
+// todo.md and the screens repo's docs/knowledge/locale-picker-and-endonym-images.md.
+
+// list_available_locales() -> JSON string. Every locale the firmware can render
+// as a pack — compiled-in fonts UNION runtime-registered SD packs — for the
+// active display profile, in supported_locales_json() shape ({"profile":...,
+// "locales":[{"locale","source_family","chain","fonts":[...]}...]}). The app
+// parses this and decorates each locale with its English display name + native
+// endonym + the live-text-vs-image decision (baked-floor glyph coverage of the
+// endonym), then builds the locale_picker_screen cfg. Baked-floor Latin locales
+// (English, ...) are NOT listed — they need no font pack; the app adds them from
+// its own translation catalog. See dm_supported_locales_json().
+static mp_obj_t mp_seedsigner_lvgl_list_available_locales(void) {
+    const char *json = dm_supported_locales_json();
+    return mp_obj_new_str(json, strlen(json));
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(seedsigner_lvgl_list_available_locales_obj, mp_seedsigner_lvgl_list_available_locales);
+
+// register_pack_manifest(manifest) -> bool. `manifest` is the bytes/str of a
+// language pack's own manifest.json (read off the SD card in Python). Registers
+// the pack as a runtime locale so load_locale()/locale_pack_files()/
+// list_available_locales() then work for a not-compiled-in code with no firmware
+// rebuild. FAILS CLOSED: returns False on malformed JSON or a missing required
+// field, so a corrupt/half-copied pack is simply skipped (never raises). See
+// ss_register_pack_manifest() via dm_register_pack_manifest().
+static mp_obj_t mp_seedsigner_lvgl_register_pack_manifest(mp_obj_t manifest_obj) {
+    mp_buffer_info_t bufinfo;
+    mp_get_buffer_raise(manifest_obj, &bufinfo, MP_BUFFER_READ);
+    bool ok = dm_register_pack_manifest((const char *)bufinfo.buf, bufinfo.len);
+    return mp_obj_new_bool(ok);
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(seedsigner_lvgl_register_pack_manifest_obj, mp_seedsigner_lvgl_register_pack_manifest);
+
+// clear_pack_manifests() -> None. Drop every runtime-registered pack (before an
+// SD rescan). See ss_clear_pack_manifests() via dm_clear_pack_manifests().
+static mp_obj_t mp_seedsigner_lvgl_clear_pack_manifests(void) {
+    dm_clear_pack_manifests();
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(seedsigner_lvgl_clear_pack_manifests_obj, mp_seedsigner_lvgl_clear_pack_manifests);
+
+// Endonym-image provider backed by a Python dict keyed "<locale>/<file>" -> bytes.
+// The picker lists EVERY onboard language's name in its own script on ONE screen,
+// so unlike load_locale (one active locale) it fetches many locales' images at
+// once — all named "endonym_<h>.bin". Keying by filename alone (as mp_pack_provider
+// does) would collide, so endonym blobs are staged under a composite "<locale>/<file>"
+// key and this provider rebuilds that key from the (locale, file) the picker asks
+// for. The picker copies each blob during the (synchronous) screen build, so the
+// dict need only outlive the locale_picker_screen() call — it is passed as an
+// argument, keeping it GC-alive for that duration. Reuses mp_pack_ctx_t.
+static bool mp_endonym_provider(const char *locale, const char *file,
+                                const uint8_t **bytes, size_t *len, void *user) {
+    mp_pack_ctx_t *ctx = (mp_pack_ctx_t *)user;
+    char key[96];
+    int klen = snprintf(key, sizeof(key), "%s/%s", locale, file);
+    if (klen <= 0 || (size_t)klen >= sizeof(key)) {
+        return false;  // unexpectedly long key -> no image; the row keeps its live text
+    }
+    mp_map_t *map = mp_obj_dict_get_map(ctx->packs);
+    mp_map_elem_t *elem = mp_map_lookup(map, mp_obj_new_str(key, klen), MP_MAP_LOOKUP);
+    if (elem == NULL) {
+        return false;  // this locale's endonym image wasn't staged
+    }
+    mp_buffer_info_t bufinfo;
+    if (!mp_get_buffer(elem->value, &bufinfo, MP_BUFFER_READ) || bufinfo.len == 0) {
+        return false;  // value isn't a bytes-like buffer (don't raise under the LVGL lock)
+    }
+    *bytes = (const uint8_t *)bufinfo.buf;
+    *len = bufinfo.len;
+    return true;
+}
+
+// locale_picker_screen(cfg=None, endonym_images=None) -> None. The language-
+// selection screen: lists every onboard language's name in its own native script
+// on one screen. Latin-script names render as live text; non-Latin names are
+// pre-rendered A8 endonym images this binding serves through the picker's image
+// provider.
+//
+//   cfg            — screen config dict ({top_nav, active_locale, rows:[...]}),
+//                    same dict->JSON path as button_list_screen. A row carrying an
+//                    "image" filename is an image row.
+//   endonym_images — optional dict {"<locale>/<file>": bytes} holding each image
+//                    row's pre-rendered endonym blob, e.g.
+//                    {"hi/endonym_480.bin": b"SSA8..."}. The picker copies what it
+//                    keeps during the synchronous build, so the dict need only live
+//                    for this call; passing it as an argument keeps it GC-alive.
+//                    Omit for a Latin-only picker (no image rows).
+//
+// Selection comes back on the shared poll queue as a button_selected event whose
+// index is the row position — the host maps index -> the locale it placed there.
+static mp_obj_t mp_seedsigner_lvgl_locale_picker_screen(size_t n_args, const mp_obj_t *args) {
+    // Wire the endonym image provider to the staging dict (if any) BEFORE building
+    // the screen, and tear it down after so the C side never keeps a dangling
+    // pointer to this call's stack ctx / the Python dict.
+    mp_pack_ctx_t endonym_ctx = { .packs = mp_const_none };
+    bool provider_set = false;
+    if (n_args >= 2 && args[1] != mp_const_none) {
+        if (!mp_obj_is_type(args[1], &mp_type_dict)) {
+            mp_raise_TypeError(MP_ERROR_TEXT("locale_picker_screen endonym_images must be a dict"));
+        }
+        endonym_ctx.packs = args[1];
+        dm_set_endonym_image_provider(mp_endonym_provider, &endonym_ctx);
+        provider_set = true;
+    }
+
+    // Serialize cfg (arg 0) to JSON and run the screen under the LVGL lock. Mirrors
+    // run_cfg_screen, kept inline so the provider is cleared on every exit path.
+    vstr_t json;
+    vstr_init(&json, 256);
+    if (n_args >= 1 && args[0] != mp_const_none) {
+        if (!mp_obj_is_type(args[0], &mp_type_dict)) {
+            vstr_clear(&json);
+            if (provider_set) dm_set_endonym_image_provider(NULL, NULL);
+            mp_raise_msg(&mp_type_TypeError, MP_ERROR_TEXT("locale_picker_screen expects a dict"));
+        }
+        vstr_add_json_from_obj(&json, args[0]);
+    } else {
+        vstr_add_str(&json, "{}");
+    }
+    const char *err = run_screen(locale_picker_screen, (void *)json.buf);
+    vstr_clear(&json);
+
+    // The picker fetched + copied every endonym during the build above, so the
+    // provider is never called again; clear it so its user pointer (our stack ctx)
+    // does not outlive this frame.
+    if (provider_set) dm_set_endonym_image_provider(NULL, NULL);
+
+    if (err) {
+        mp_raise_msg_varg(&mp_type_ValueError, MP_ERROR_TEXT("%s"), err);
+    }
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(seedsigner_lvgl_locale_picker_screen_obj, 0, 2, mp_seedsigner_lvgl_locale_picker_screen);
+
 // --- Instrumentation ------------------------------------------------------
 // mem_stats() / get_memory_stats() -> dict. Reports the small internal LVGL
 // builtin pool (CONFIG_LV_MEM_SIZE_KILOBYTES — 128 KB on P4-43, 64 KB on S3)
@@ -543,12 +682,16 @@ static mp_obj_t mp_seedsigner_lvgl_set_cache_psram(mp_obj_t enabled_obj) {
 static MP_DEFINE_CONST_FUN_OBJ_1(seedsigner_lvgl_set_cache_psram_obj, mp_seedsigner_lvgl_set_cache_psram);
 
 static const mp_rom_map_elem_t seedsigner_lvgl_module_globals_table[] = {
-    { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_seedsigner_lvgl_screens) },
+    { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR__seedsigner_lvgl_screens) },
     { MP_ROM_QSTR(MP_QSTR_init), MP_ROM_PTR(&seedsigner_lvgl_init_obj) },
     { MP_ROM_QSTR(MP_QSTR_set_screensaver_timeout), MP_ROM_PTR(&seedsigner_lvgl_set_screensaver_timeout_obj) },
     { MP_ROM_QSTR(MP_QSTR_locale_pack_files), MP_ROM_PTR(&seedsigner_lvgl_locale_pack_files_obj) },
     { MP_ROM_QSTR(MP_QSTR_load_locale), MP_ROM_PTR(&seedsigner_lvgl_load_locale_obj) },
     { MP_ROM_QSTR(MP_QSTR_unload_locale), MP_ROM_PTR(&seedsigner_lvgl_unload_locale_obj) },
+    { MP_ROM_QSTR(MP_QSTR_list_available_locales), MP_ROM_PTR(&seedsigner_lvgl_list_available_locales_obj) },
+    { MP_ROM_QSTR(MP_QSTR_register_pack_manifest), MP_ROM_PTR(&seedsigner_lvgl_register_pack_manifest_obj) },
+    { MP_ROM_QSTR(MP_QSTR_clear_pack_manifests), MP_ROM_PTR(&seedsigner_lvgl_clear_pack_manifests_obj) },
+    { MP_ROM_QSTR(MP_QSTR_locale_picker_screen), MP_ROM_PTR(&seedsigner_lvgl_locale_picker_screen_obj) },
     { MP_ROM_QSTR(MP_QSTR_button_list_screen), MP_ROM_PTR(&seedsigner_lvgl_button_list_screen_obj) },
     { MP_ROM_QSTR(MP_QSTR_large_icon_status_screen), MP_ROM_PTR(&seedsigner_lvgl_large_icon_status_screen_obj) },
     { MP_ROM_QSTR(MP_QSTR_seed_add_passphrase_screen), MP_ROM_PTR(&seedsigner_lvgl_seed_add_passphrase_screen_obj) },
@@ -575,4 +718,12 @@ const mp_obj_module_t seedsigner_lvgl_user_cmodule = {
     .globals = (mp_obj_dict_t *)&seedsigner_lvgl_module_globals,
 };
 
-MP_REGISTER_MODULE(MP_QSTR_seedsigner_lvgl_screens, seedsigner_lvgl_user_cmodule);
+// Registered as the PRIVATE name `_seedsigner_lvgl_screens`. The public import
+// name `seedsigner_lvgl_screens` (what the shared app imports) is a thin frozen /
+// /lib Python façade that wraps this C module and hides the ESP32 SD-card I/O
+// behind the same dir-based locale API the Pi native module (seedsigner-raspi-lvgl)
+// exposes — so the app calls the same names on both platforms. The façade reads
+// pack bytes off the SD (machine.SDCard) and hands them to the byte-based C API
+// here (load_locale/register_pack_manifest/locale_picker_screen); the C side can't
+// open the SD directly (ESP-IDF fatfs vs MicroPython oofatfs link collision).
+MP_REGISTER_MODULE(MP_QSTR__seedsigner_lvgl_screens, seedsigner_lvgl_user_cmodule);
