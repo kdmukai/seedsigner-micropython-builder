@@ -354,6 +354,48 @@ static mp_obj_t mp_seedsigner_lvgl_qr_display_is_tip_active(void) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(seedsigner_lvgl_qr_display_is_tip_active_obj, mp_seedsigner_lvgl_qr_display_is_tip_active);
 
+// --- PSBT transaction-review screens (batched native-screen bindings) ----------
+// LVGL ports of the SeedSigner PSBT review flow. All four use the same dict-config
+// shape as button_list_screen: the Python runner passes a cfg dict, run_cfg_screen
+// forwards it as JSON, and the screen-side C++ validates + fills per-key defaults.
+// Each is a standard polled screen with a bottom-pinned button list, so button
+// selection comes back on the shared poll queue (on_button_selected), exactly like
+// seed_finalize_screen. The host owns all i18n (localized title + labels) and all
+// amount formatting (btc_amount is a pure renderer -- the two platforms can never
+// disagree on how an amount rounds). Per-screen cfg contracts are documented at each
+// function in seedsigner.cpp.
+
+static mp_obj_t mp_seedsigner_lvgl_psbt_overview_screen(size_t n_args, const mp_obj_t *args) {
+    // "Review Transaction": the transaction-flow pictogram (every input -> a shared
+    // center bar -> recipients/self-transfers/change/OP_RETURN/fee) with a continuous
+    // orange pulse, an optional BtcAmount headline, and a bottom "Review details" button.
+    return run_cfg_screen(psbt_overview_screen, "psbt_overview_screen", n_args, args);
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(seedsigner_lvgl_psbt_overview_screen_obj, 0, 1, mp_seedsigner_lvgl_psbt_overview_screen);
+
+static mp_obj_t mp_seedsigner_lvgl_psbt_address_details_screen(size_t n_args, const mp_obj_t *args) {
+    // One recipient's amount over its full, wrapped destination address, vertically
+    // centered. cfg requires an "address" string (screen-side raises -> ValueError here).
+    return run_cfg_screen(psbt_address_details_screen, "psbt_address_details_screen", n_args, args);
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(seedsigner_lvgl_psbt_address_details_screen_obj, 0, 1, mp_seedsigner_lvgl_psbt_address_details_screen);
+
+static mp_obj_t mp_seedsigner_lvgl_psbt_change_details_screen(size_t n_args, const mp_obj_t *args) {
+    // The change / self-receive output: amount, a "change address #N" label, the
+    // single-line address, and an optional "Address verified!" confirmation. cfg
+    // requires an "address" string (screen-side raises -> ValueError here).
+    return run_cfg_screen(psbt_change_details_screen, "psbt_change_details_screen", n_args, args);
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(seedsigner_lvgl_psbt_change_details_screen_obj, 0, 1, mp_seedsigner_lvgl_psbt_change_details_screen);
+
+static mp_obj_t mp_seedsigner_lvgl_psbt_math_screen(size_t n_args, const mp_obj_t *args) {
+    // The fee "math": input - recipients - fee = change, right-aligned monospace with
+    // btc-mode satoshi-zone dimming and an orange change unit. The host passes each
+    // amount as an already-formatted number string plus the denomination flag.
+    return run_cfg_screen(psbt_math_screen, "psbt_math_screen", n_args, args);
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(seedsigner_lvgl_psbt_math_screen_obj, 0, 1, mp_seedsigner_lvgl_psbt_math_screen);
+
 static mp_obj_t mp_seedsigner_lvgl_poll_for_result(void) {
     if (s_result_count == 0) {
         return mp_const_none;
@@ -702,6 +744,10 @@ static const mp_rom_map_elem_t seedsigner_lvgl_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_qr_display_screen), MP_ROM_PTR(&seedsigner_lvgl_qr_display_screen_obj) },
     { MP_ROM_QSTR(MP_QSTR_qr_display_set_frame), MP_ROM_PTR(&seedsigner_lvgl_qr_display_set_frame_obj) },
     { MP_ROM_QSTR(MP_QSTR_qr_display_is_tip_active), MP_ROM_PTR(&seedsigner_lvgl_qr_display_is_tip_active_obj) },
+    { MP_ROM_QSTR(MP_QSTR_psbt_overview_screen), MP_ROM_PTR(&seedsigner_lvgl_psbt_overview_screen_obj) },
+    { MP_ROM_QSTR(MP_QSTR_psbt_address_details_screen), MP_ROM_PTR(&seedsigner_lvgl_psbt_address_details_screen_obj) },
+    { MP_ROM_QSTR(MP_QSTR_psbt_change_details_screen), MP_ROM_PTR(&seedsigner_lvgl_psbt_change_details_screen_obj) },
+    { MP_ROM_QSTR(MP_QSTR_psbt_math_screen), MP_ROM_PTR(&seedsigner_lvgl_psbt_math_screen_obj) },
     { MP_ROM_QSTR(MP_QSTR_main_menu_screen), MP_ROM_PTR(&seedsigner_lvgl_main_menu_screen_obj) },
     { MP_ROM_QSTR(MP_QSTR_splash_screen), MP_ROM_PTR(&seedsigner_lvgl_splash_screen_obj) },
     { MP_ROM_QSTR(MP_QSTR_screensaver_screen), MP_ROM_PTR(&seedsigner_lvgl_screensaver_screen_obj) },
