@@ -305,6 +305,23 @@ extern "C" void dm_set_endonym_image_provider(ss_pack_provider_t provider, void 
     locale_picker_set_image_provider(provider, user);
 }
 
+/* Push the next animated-QR frame into a live qr_display_screen. Called from Python
+ * on the MicroPython task, concurrent with the esp_lvgl_port render task. The screen's
+ * qr_display_set_frame() re-encodes and lv_obj_invalidate()s the QR, so it MUST run
+ * under the LVGL-port lock (a bare call races the render task and the invalidate never
+ * registers — the QR freezes on its first frame). The screens layer assumes a
+ * single-threaded host, so the host owns this lock, exactly like run_screen /
+ * dm_set_screensaver_timeout. */
+extern "C" void dm_qr_display_set_frame(const void *data, size_t len)
+{
+    if (!lvgl_port_lock(0)) {
+        ESP_LOGE(TAG, "dm_qr_display_set_frame: display lock unavailable");
+        return;
+    }
+    qr_display_set_frame(data, len);
+    lvgl_port_unlock();
+}
+
 /* Set the screensaver idle timeout (ms; 0 disables). Called from Python on the
  * MicroPython task, concurrent with the esp_lvgl_port task — and a 0 here can
  * dismiss an active saver (loads/deletes screens), so take the LVGL-port lock,

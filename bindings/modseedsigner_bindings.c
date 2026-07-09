@@ -345,7 +345,10 @@ static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(seedsigner_lvgl_qr_display_screen_obj
 static mp_obj_t mp_seedsigner_lvgl_qr_display_set_frame(mp_obj_t data_obj) {
     mp_buffer_info_t bufinfo;
     mp_get_buffer_raise(data_obj, &bufinfo, MP_BUFFER_READ);
-    qr_display_set_frame(bufinfo.buf, bufinfo.len);
+    // Route through the display_manager wrapper so the re-encode + lv_obj_invalidate
+    // run under the LVGL-port lock (this binding is on the MicroPython task, concurrent
+    // with the render task; a bare call races it and the frame never repaints).
+    dm_qr_display_set_frame(bufinfo.buf, bufinfo.len);
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(seedsigner_lvgl_qr_display_set_frame_obj, mp_seedsigner_lvgl_qr_display_set_frame);
