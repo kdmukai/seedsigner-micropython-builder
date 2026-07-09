@@ -19,6 +19,12 @@ CONFIG_LV_FONT_MONTSERRAT_26=y
 CONFIG_LV_FONT_MONTSERRAT_28=y
 CONFIG_LV_FONT_MONTSERRAT_30=y
 CONFIG_LV_USE_REFR_DEBUG=n
+
+# LVGL bundled QR encoder. Required by qr_display_screen and the SeedQR transcribe
+# screens: without it LV_USE_QRCODE defaults to 0, so those screens compile the
+# `#if !LV_USE_QRCODE` blank-screen fallback and every QR renders blank on device
+# (while working on the Pi Zero, whose LVGL build enables it).
+CONFIG_LV_USE_QRCODE=y
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions-16MiB-waveshare.csv"
 CONFIG_PARTITION_TABLE_FILENAME="partitions-16MiB-waveshare.csv"

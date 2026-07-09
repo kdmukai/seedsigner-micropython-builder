@@ -16,6 +16,10 @@ typedef void (*display_manager_ui_callback_t)(void *ctx);
 void init(void);
 const char *run_screen(display_manager_ui_callback_t cb, void *ctx);
 
+/* Push the next animated-QR frame into a live qr_display_screen, under the LVGL-port
+ * lock (the live-push equivalent of run_screen; see the definition). */
+void dm_qr_display_set_frame(const void *data, size_t len);
+
 /* Switch the active i18n locale via the shared loader, wrapped in the LVGL-port
  * lock. `provider` acquires each pack file's bytes — on MicroPython the binding
  * supplies a provider backed by bytes read off the SD card in Python (the
