@@ -3,6 +3,10 @@
 /dist/
 /logs/
 
+# Frozen-app staging: hand-copied seedsigner + embit source trees consumed by a
+# board manifest's package() freeze. Copies of other repos' code — not tracked here.
+/frozen_app/
+
 # Build outputs
 /deps/micropython/upstream/ports/esp32/build*
 
