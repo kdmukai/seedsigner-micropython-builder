@@ -1,8 +1,29 @@
 diff --git a/ports/esp32/CMakeLists.txt b/ports/esp32/CMakeLists.txt
-index 9d6be8010..8bd1e0050 100644
+index 9d6be8010..24e92d711 100644
 --- a/ports/esp32/CMakeLists.txt
 +++ b/ports/esp32/CMakeLists.txt
-@@ -58,6 +58,51 @@ endforeach()
+@@ -49,6 +49,20 @@ elseif (NOT MICROPY_FROZEN_MANIFEST)
+     set(MICROPY_FROZEN_MANIFEST ${CMAKE_CURRENT_LIST_DIR}/boards/manifest.py)
+ endif()
+ 
++# Optional extra sdkconfig fragment appended LAST (so it overrides everything
++# in the board chain). The builder uses this for its build profiles, e.g.
++# PROFILE=release -> sdkconfig.seedsigner_release (SPIRAM memtest off, log
++# levels down). Semicolon-separated list of absolute paths.
++if(DEFINED MICROPY_SDKCONFIG_EXTRA)
++    foreach(_extra_sdkconfig ${MICROPY_SDKCONFIG_EXTRA})
++        if(EXISTS "${_extra_sdkconfig}")
++            list(APPEND SDKCONFIG_DEFAULTS "${_extra_sdkconfig}")
++        else()
++            message(WARNING "MICROPY_SDKCONFIG_EXTRA entry not found: ${_extra_sdkconfig}")
++        endif()
++    endforeach()
++endif()
++
+ # Concatenate all sdkconfig files into a combined one for the IDF to use.
+ file(WRITE ${CMAKE_BINARY_DIR}/sdkconfig.combined.in "")
+ foreach(SDKCONFIG_DEFAULT ${SDKCONFIG_DEFAULTS})
+@@ -58,6 +72,58 @@ endforeach()
  configure_file(${CMAKE_BINARY_DIR}/sdkconfig.combined.in ${CMAKE_BINARY_DIR}/sdkconfig.combined COPYONLY)
  set(SDKCONFIG_DEFAULTS ${CMAKE_BINARY_DIR}/sdkconfig.combined)
  
@@ -49,6 +70,13 @@ index 9d6be8010..8bd1e0050 100644
 +        espressif__eppp_link espressif__esp_serial_slave_link
 +    )
 +endif()
++# NOTE on the I/O expander (TCA9554): its per-board disable is handled
++# entirely in board_common (manifest `require: no` + a BOARD_HAS_IO_EXPANDER-
++# conditional REQUIRE). Do NOT try to EXCLUDE_COMPONENTS it here — components
++# fetched by the IDF component manager are re-added by the manager's own
++# integration and bypass EXCLUDE_COMPONENTS (verified empirically); the entry
++# would be dead machinery that looks load-bearing. As an unreferenced,
++# unlinked orphan it contributes zero bytes to the image.
 +message(STATUS "PROJECT_EXCLUDE_COMPONENTS=${EXCLUDE_COMPONENTS}")
 +
  # Include main IDF cmake file.
@@ -312,7 +340,7 @@ index e3b1b81ca..8447c7307 100644
  # Collect all of the include directories and compile definitions for the IDF components,
  # including those added by the IDF Component Manager via idf_components.yaml.
 diff --git a/ports/esp32/lockfiles/dependencies.lock.esp32p4 b/ports/esp32/lockfiles/dependencies.lock.esp32p4
-index aea6ec2cc..91982ee57 100644
+index aea6ec2cc..1cc0becfa 100644
 --- a/ports/esp32/lockfiles/dependencies.lock.esp32p4
 +++ b/ports/esp32/lockfiles/dependencies.lock.esp32p4
 @@ -1,30 +1,122 @@
@@ -687,7 +715,7 @@ index aea6ec2cc..91982ee57 100644
 +- lvgl/lvgl
 +- waveshare/pcf85063a
 +- waveshare/qmi8658
-+manifest_hash: 06243ec5f35f28a5980bcfdb127a3b163d4e5a231a986ea5171ebc7e0b48fee6
++manifest_hash: dd555857d524dfa9add6e0f988cce6bcef7ed6381a2e050c8a4b22ca45c2fc73
  target: esp32p4
  version: 2.0.0
 diff --git a/ports/esp32/main.c b/ports/esp32/main.c

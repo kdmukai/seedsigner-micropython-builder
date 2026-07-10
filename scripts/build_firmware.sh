@@ -110,6 +110,10 @@ if [ -z "${BOARD_CONFIG_DIR:-}" ]; then
 fi
 if [ -n "$BOARD_CONFIG_DIR" ] && [ -d "$BOARD_CONFIG_DIR" ]; then
   MICROPY_CMAKE_ARGS="$MICROPY_CMAKE_ARGS -DBOARD_CONFIG_DIR=$BOARD_CONFIG_DIR"
+  # Exported for ESP-IDF's script-mode component passes, where -D cache args
+  # are invisible: board_common parses $BOARD_CONFIG_DIR/board_config.h to
+  # decide its I/O-expander REQUIRE in BOTH passes (see its CMakeLists.txt).
+  export BOARD_CONFIG_DIR
 else
   echo "WARNING: BOARD_CONFIG_DIR not found: ${BOARD_CONFIG_DIR:-<unset>}"
 fi
@@ -123,6 +127,23 @@ if [ -z "${SEEDSIGNER_DISPLAY_HEIGHT:-}" ]; then
   esac
 fi
 MICROPY_CMAKE_ARGS="$MICROPY_CMAKE_ARGS -DSEEDSIGNER_DISPLAY_HEIGHT=$SEEDSIGNER_DISPLAY_HEIGHT"
+
+# Build profile. dev (default) = the board's maximal-debug sdkconfig chain
+# unchanged. PROFILE=release appends ports/esp32/profiles/sdkconfig.release
+# LAST (overrides the debug block: SPIRAM memtest off, WARN logs, LVGL
+# asserts off) via the MICROPY_SDKCONFIG_EXTRA hook in the MicroPython patch.
+PROFILE="${PROFILE:-dev}"
+if [ "$PROFILE" = "release" ]; then
+  RELEASE_FRAGMENT="$ROOT_DIR/ports/esp32/profiles/sdkconfig.release"
+  if [ ! -f "$RELEASE_FRAGMENT" ]; then
+    echo "ERROR: PROFILE=release but $RELEASE_FRAGMENT is missing"
+    exit 1
+  fi
+  MICROPY_CMAKE_ARGS="$MICROPY_CMAKE_ARGS -DMICROPY_SDKCONFIG_EXTRA=$RELEASE_FRAGMENT"
+  echo "Build profile: RELEASE ($RELEASE_FRAGMENT)"
+else
+  echo "Build profile: dev (maximal debug; PROFILE=release for the perf build)"
+fi
 
 {
   make -C "$MP_DIR/mpy-cross" USER_C_MODULES= -j"$(nproc)"
