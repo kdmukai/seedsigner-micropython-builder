@@ -1,0 +1,30 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -42,10 +42,9 @@
+     "src/class/video/video_device.c"
+     "src/class/bth/bth_device.c"
+     "src/class/usbtmc/usbtmc_device.c"
+-    # NET class
+-    "src/class/net/ecm_rndis_device.c"
+-    "lib/networking/rndis_reports.c"
+-    "src/class/net/ncm_device.c"
++    # NET class (ECM/RNDIS/NCM) removed for SeedSigner offline firmware:
++    # USB networking is never enabled (no CFG_TUD_ECM_RNDIS/NCM) and
++    # rndis_reports.c was the only reason this component required esp_netif.
+     # DFU
+     "src/class/dfu/dfu_device.c"
+     "src/class/dfu/dfu_rt_device.c"
+@@ -58,9 +57,10 @@
+     "src/tusb.c"
+     )
+ 
+-set(requirements_private
+-    esp_netif   # required by rndis_reports.c: #include "netif/ethernet.h"
+-    )
++# SeedSigner: esp_netif requirement dropped along with the NET class sources
++# above (it existed only for rndis_reports.c's #include "netif/ethernet.h").
++# This lets offline builds exclude esp_netif/lwip from the build entirely.
++set(requirements_private)
+ 
+ if(${target} STREQUAL "esp32p4")
+     list(APPEND requirements_private

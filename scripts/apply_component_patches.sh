@@ -18,9 +18,10 @@ set -euo pipefail
 # (pristine) component is re-patched. A missing component with pending patches is
 # a hard error -- we never silently ship an unpatched build.
 #
-# Convention: any patch named `lvgl-*.patch` targets the lvgl__lvgl component and
-# is applied with `patch -p1` from that component's root (the diffs use a/ b/
-# prefixes rooted at the component, e.g. a/src/misc/lv_rb.c).
+# Convention: the patch filename prefix selects the target component; diffs use
+# a/ b/ prefixes rooted at that component and apply with `patch -p1`:
+#   lvgl-*.patch    -> lvgl__lvgl          (e.g. a/src/misc/lv_rb.c)
+#   tinyusb-*.patch -> espressif__tinyusb  (e.g. a/CMakeLists.txt)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -63,8 +64,9 @@ shopt -s nullglob
 for p in "$PATCH_DIR"/*.patch; do
   case "$(basename "$p")" in
     lvgl-*) apply_one "$COMP_ROOT/lvgl__lvgl" "$p" ;;
+    tinyusb-*) apply_one "$COMP_ROOT/espressif__tinyusb" "$p" ;;
     *)
-      echo "ERROR: no component mapping for patch $(basename "$p") (expected lvgl-*.patch)"
+      echo "ERROR: no component mapping for patch $(basename "$p") (expected lvgl-*.patch or tinyusb-*.patch)"
       exit 1
       ;;
   esac

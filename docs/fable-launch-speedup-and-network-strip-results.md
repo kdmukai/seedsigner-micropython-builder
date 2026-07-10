@@ -71,10 +71,67 @@ P3 instrumentation pass.
 `CONFIG_ETH_ENABLED=y` (+EMAC/RMII/SPI-eth drivers), `CONFIG_ESP_NETIF_TCPIP_LWIP=y`, full
 `CONFIG_ESP_WIFI_*` buffer/AMPDU/WPA3 set, **85** `CONFIG_LWIP_*` lines. All targets for `=n` overrides.
 
+## P1 — network strip (in progress; statically clean since build #1)
+
+**Image-level result (already achieved by build iteration #1):** zero bytes from any network
+component in the linked image — placed-archive-member count for
+lwip/esp_netif/esp_wifi/esp_eth/bt/esp-tls/http/mqtt/protocomm/etc: **0** (baseline: **3709**).
+`esp_hosted`, `esp_wifi_remote`, `eppp_link`, `esp_serial_slave_link`, `mdns` are gone entirely
+(removed from `main/idf_component.yml` — they were explicit P4 deps in upstream's manifest).
+
+**Why the prior `MICROPY_DISABLE_NETWORK` machinery never worked — two root causes found:**
+
+1. **ESP-IDF script-mode pass can't see `-D` cache args.** IDF's early component expansion
+   evaluates each component's CMakeLists in *script mode* to collect the REQUIRES graph. In that
+   pass `MICROPY_DISABLE_NETWORK` (a `-D` cache var) is undefined, so `esp32_common.cmake`
+   reported the *networked* IDF_COMPONENTS list — the network components entered the graph and
+   compiled even when the real pass linked the minimal list. Same quirk family as the screens
+   repo's `screen_sources.cmake` script-mode fix. **Fix:** the flag detection now falls back to
+   the *environment variable* `MICROPY_DISABLE_NETWORK` (visible in script mode);
+   `build_firmware.sh` exports it for the real build.
+2. **`EXCLUDE_COMPONENTS` in `main/CMakeLists.txt` is silently ignored.** IDF only honors it at
+   *project level*, set before `project.cmake` is included. The prior attempt set it inside the
+   `main` component — a no-op that *looked* load-bearing. **Fix:** exclusion moved to
+   `ports/esp32/CMakeLists.txt` (which the patch already modifies), covering the whole
+   radio/TCP-IP tree incl. defensive entries for the removed managed components.
+
+**tinyusb kept lwip/esp_netif in the compile graph** (not the image): it unconditionally compiles
+its USB networking classes (ECM/RNDIS/NCM) and requires `esp_netif` for one header, though zero
+bytes of them are placed (CFG_TUD networking off). **Fix:** new managed-component patch
+`component_patches/tinyusb-no-usb-net-class.patch` (mechanism precedent: the LVGL PSRAM patches)
+drops the NET class sources + the esp_netif requirement at the source level — USB networking is
+now not even compiled. Build order note: the `submodules` fetch pass runs unstripped, component
+patches apply, then the real build runs with the strip active (fresh-tree safety).
+
+**C6 co-processor rendered inert (hardware level):** the P4-43 follows the esp-hosted P4
+reference wiring — C6 reset line on **GPIO54**, idles high (C6 runs its factory hosted-slave
+firmware), **low = held in reset**; polarity verified from esp_hosted 2.7.0 Kconfig
+(SDIO reset default ACTIVE_HIGH ⇒ "Low will trigger reset"), pin from its P4 board preset;
+GPIO54 unused by our board config (audio PA is GPIO53). `board_common` change (branch
+`feat/radio-coproc-hold-in-reset` in that submodule): generic `BOARD_RADIO_COPROC_RESET_PIN`
+hook in `board_init.c` — configured output-low + pull-down at the earliest point of board init
+and left low; P4-43 `board_config.h` defines it. Even before this, nothing ever started the
+SDIO host (upstream's `sdkconfig.p4_wifi_*` fragments were never in our board's config chain,
+and now esp_hosted isn't even fetched) — the GPIO hold makes the C6 execute no code at all.
+
+**sdkconfig belt-and-suspenders** added to the P4-43 `sdkconfig.board` (=n for
+WIFI/WIFI_REMOTE/HOSTED/NETIF-TCPIP/ETH; BT was already =n). Note: kconfig *choice* symbols
+(e.g. `ESP_NETIF_TCPIP_LWIP`) can't be forced off while their component is discovered — the
+real guarantee is component absence + zero placed members + boot-log proof.
+
+**Build iterations:** #1 flag+manifest probe (clean, image clean) → #2 env fix + sdkconfig
+(fail: `main.c` unconditional `#include "modnetwork.h"` → guarded with
+`MICROPY_PY_NETWORK || MICROPY_PY_SOCKET_EVENTS`) → #3 clean → #4 (running) project-level
+exclusion + tinyusb patch + C6 hold-in-reset.
+
 ## Decisions made
 
 1. **Screens submodule bumped to upstream main 267cc64** as branch's first commit (user merged screens PRs; keeps regression surface current). Build-verified.
 2. Baseline flashed from the same branch/build that P1 modifies, so before/after diffs are apples-to-apples.
+3. **Strip default-ON for all boards** (`MP_DISABLE_NETWORK=0` env rebuilds a networked debug image). Rationale: SeedSigner never uses networking on any target; S3 boards get the same treatment on their next build rather than a per-board gate.
+4. **Replaced (not nursed) the broken parts of the old machinery**: kept the `_MICROPY_NET_OFF` source/component-list logic in `esp32_common.cmake` (sound), added env-var detection, moved exclusion to project level, deleted the dead `main/CMakeLists.txt` block. Brief explicitly authorized rework.
+5. **tinyusb patched rather than tolerated**: compile-only network residue would have been harmless, but patching removes USB networking (RNDIS/NCM) at the source level — for an air-gapped signer, "not compiled" beats "compiled but disabled", and the patch is one hunk in a version-pinned component.
+6. **C6 held in reset via GPIO54 without the board schematic in hand** (Waveshare wiki is Cloudflare-blocked; local KB has no P4-43 schematic PDF). Evidence chain: esp_hosted P4 preset pin + polarity, Waveshare's own wifi demo using stock esp_hosted defaults, GPIO54 unused in our board config. Device regression will catch any wiring surprise.
 
 ## Blockers / gotchas hit
 
