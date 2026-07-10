@@ -1,0 +1,37 @@
+# SeedSigner RELEASE build profile (PROFILE=release in build_firmware.sh).
+# Appended LAST in the sdkconfig chain (via MICROPY_SDKCONFIG_EXTRA), so it
+# overrides the maximal-debug block in the board's sdkconfig.board. The dev
+# profile (default) is that debug block unchanged — see
+# docs/knowledge/esp32-p4-debug-build.md for why it exists.
+#
+# Scope: boot-time and log-noise cuts that are safe for a signing device.
+# Deliberately KEPT ON even in release (cheap, high field value):
+#   - coredump-to-flash (post-mortem without a debugger)
+#   - task WDT + panic (hang diagnosis)
+#   - FreeRTOS stack canaries + end-of-stack watchpoint
+
+# PSRAM memtest: full-RAM pattern test on every boot (~0.4 s on the 32 MB P4).
+# Bring-up insurance only — the RAM doesn't degrade per-boot.
+CONFIG_SPIRAM_MEMTEST=n
+
+# Log levels. Runtime default AND compiled-in maximum to WARN; bootloader to
+# WARN. NOTE the camera constraint is a CEILING: the compiled-in maximum must
+# never be raised ABOVE INFO (esp_video's CSI DMA path logs at DEBUG from ISR
+# context -> interrupt-WDT crash; see sdkconfig.board). Going below is safe.
+CONFIG_LOG_DEFAULT_LEVEL_WARN=y
+CONFIG_LOG_MAXIMUM_LEVEL_WARN=y
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
+
+# Debug conveniences off for release.
+CONFIG_ESP_ERR_TO_NAME_LOOKUP=n
+CONFIG_ESP_SYSTEM_USE_EH_FRAME=n
+CONFIG_CAM_PIPELINE_DEBUG=n
+
+# LVGL self-checks off (each assert is per-allocation/per-object overhead in
+# the render path).
+CONFIG_LV_USE_LOG=n
+CONFIG_LV_USE_ASSERT_NULL=n
+CONFIG_LV_USE_ASSERT_MALLOC=n
+CONFIG_LV_USE_ASSERT_MEM_INTEGRITY=n
+CONFIG_LV_USE_ASSERT_OBJ=n
+CONFIG_LV_USE_ASSERT_STYLE=n

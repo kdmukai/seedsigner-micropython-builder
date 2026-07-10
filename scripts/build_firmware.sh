@@ -55,6 +55,22 @@ idf.py --version >/dev/null 2>&1 || { echo "ERROR: idf.py not runnable (GHCR bas
 PORTS_ESP32_DIR="$ROOT_DIR/ports/esp32"
 USER_C_MODULES_FILE="$ROOT_DIR/usercmodule.cmake"
 MICROPY_CMAKE_ARGS="${CMAKE_ARGS:-} -DUSER_C_MODULES=$USER_C_MODULES_FILE"
+
+# SeedSigner is an air-gapped signer: strip the entire radio/TCP-IP stack
+# (WiFi, BT, LWIP, esp_netif, ethernet, ESP-NOW) from the firmware at the
+# component level. This drives the MICROPY_DISABLE_NETWORK machinery in the
+# MicroPython patch (ports/esp32/CMakeLists.txt EXCLUDE_COMPONENTS +
+# esp32_common.cmake source/component lists). Default ON for all boards; set
+# MP_DISABLE_NETWORK=0 to build a networked debug image.
+#
+# IMPORTANT: the strip flags are activated ONLY for the real firmware build
+# (see below), NOT for the `submodules` reconfigure. That throwaway pass is
+# what fetches the managed components, and the strip's EXCLUDE_COMPONENTS can
+# only resolve once apply_component_patches.sh has patched tinyusb to drop
+# its esp_netif requirement — patching requires the component to have been
+# fetched first. Order: fetch (unstripped) -> patch -> real build (stripped).
+MP_DISABLE_NETWORK="${MP_DISABLE_NETWORK:-1}"
+unset MICROPY_DISABLE_NETWORK
 # Component search path. Includes board_common's nested camera components so that
 # board_common's REQUIRES (esp-camera-pipeline, cam_pipeline_qr) resolve — same set
 # the board_common apps (scan_coord_test, qr_overlay_test) point EXTRA_COMPONENT_DIRS at.
@@ -94,6 +110,10 @@ if [ -z "${BOARD_CONFIG_DIR:-}" ]; then
 fi
 if [ -n "$BOARD_CONFIG_DIR" ] && [ -d "$BOARD_CONFIG_DIR" ]; then
   MICROPY_CMAKE_ARGS="$MICROPY_CMAKE_ARGS -DBOARD_CONFIG_DIR=$BOARD_CONFIG_DIR"
+  # Exported for ESP-IDF's script-mode component passes, where -D cache args
+  # are invisible: board_common parses $BOARD_CONFIG_DIR/board_config.h to
+  # decide its I/O-expander REQUIRE in BOTH passes (see its CMakeLists.txt).
+  export BOARD_CONFIG_DIR
 else
   echo "WARNING: BOARD_CONFIG_DIR not found: ${BOARD_CONFIG_DIR:-<unset>}"
 fi
@@ -107,6 +127,23 @@ if [ -z "${SEEDSIGNER_DISPLAY_HEIGHT:-}" ]; then
   esac
 fi
 MICROPY_CMAKE_ARGS="$MICROPY_CMAKE_ARGS -DSEEDSIGNER_DISPLAY_HEIGHT=$SEEDSIGNER_DISPLAY_HEIGHT"
+
+# Build profile. dev (default) = the board's maximal-debug sdkconfig chain
+# unchanged. PROFILE=release appends ports/esp32/profiles/sdkconfig.release
+# LAST (overrides the debug block: SPIRAM memtest off, WARN logs, LVGL
+# asserts off) via the MICROPY_SDKCONFIG_EXTRA hook in the MicroPython patch.
+PROFILE="${PROFILE:-dev}"
+if [ "$PROFILE" = "release" ]; then
+  RELEASE_FRAGMENT="$ROOT_DIR/ports/esp32/profiles/sdkconfig.release"
+  if [ ! -f "$RELEASE_FRAGMENT" ]; then
+    echo "ERROR: PROFILE=release but $RELEASE_FRAGMENT is missing"
+    exit 1
+  fi
+  MICROPY_CMAKE_ARGS="$MICROPY_CMAKE_ARGS -DMICROPY_SDKCONFIG_EXTRA=$RELEASE_FRAGMENT"
+  echo "Build profile: RELEASE ($RELEASE_FRAGMENT)"
+else
+  echo "Build profile: dev (maximal debug; PROFILE=release for the perf build)"
+fi
 
 {
   make -C "$MP_DIR/mpy-cross" USER_C_MODULES= -j"$(nproc)"
@@ -127,12 +164,23 @@ MICROPY_CMAKE_ARGS="$MICROPY_CMAKE_ARGS -DSEEDSIGNER_DISPLAY_HEIGHT=$SEEDSIGNER_
     CMAKE_ARGS="$MICROPY_CMAKE_ARGS" \
     submodules
 
-  # Patch fetched ESP-IDF managed components (e.g. LVGL). The `submodules`
-  # reconfigure above runs the IDF component manager, which materializes
-  # ports/esp32/managed_components/; patch it now, before the real build compiles
-  # it. Idempotent (sentinel/dry-run guarded). See apply_component_patches.sh and
-  # docs/approach-a-cache-psram-design.md.
+  # Patch fetched ESP-IDF managed components (e.g. LVGL, tinyusb). The
+  # `submodules` reconfigure above runs the IDF component manager, which
+  # materializes ports/esp32/managed_components/; patch it now, before the
+  # real build compiles it. Idempotent (sentinel/dry-run guarded). See
+  # apply_component_patches.sh and docs/approach-a-cache-psram-design.md.
   "$SCRIPT_DIR/apply_component_patches.sh" "$WORKDIR"
+
+  # Activate the network strip for the REAL build only (the submodules
+  # reconfigure above must run unstripped — see the MP_DISABLE_NETWORK note).
+  # Both the -D and the env var are needed: ESP-IDF's early component
+  # expansion evaluates component CMakeLists in script mode, where -D cache
+  # variables don't exist but the environment does. Without the env var the
+  # network components still enter the component graph and compile (unlinked).
+  if [ "$MP_DISABLE_NETWORK" = "1" ]; then
+    MICROPY_CMAKE_ARGS="$MICROPY_CMAKE_ARGS -DMICROPY_DISABLE_NETWORK=ON"
+    export MICROPY_DISABLE_NETWORK=1
+  fi
 
   make -C "$MP_DIR/ports/esp32" -j"$(nproc)" \
     BOARD="$BOARD" \

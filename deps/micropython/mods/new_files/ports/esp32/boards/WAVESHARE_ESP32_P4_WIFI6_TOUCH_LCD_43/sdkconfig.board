@@ -196,6 +196,23 @@ CONFIG_PARTITION_TABLE_FILENAME="partitions-32MiB-waveshare.csv"
 # P4 has no built-in Bluetooth.
 CONFIG_BT_ENABLED=n
 
+# ── Network strip (air-gap guarantee) ──────────────────────────────────────
+# The radio/TCP-IP components (esp_wifi, lwip, esp_netif, esp_eth, bt,
+# esp_hosted/esp_wifi_remote, mdns, the HTTP/TLS/OTA/provisioning stacks) are
+# excluded from the build entirely via MICROPY_DISABLE_NETWORK (see
+# build_firmware.sh + the esp32_common.cmake machinery in the MicroPython
+# patch), so most of these Kconfig symbols don't even exist in the resolved
+# config. The =n lines are belt-and-suspenders: if a future change ever
+# re-pulls a network component transitively, it comes back CONFIG-DEAD rather
+# than config-live. Unknown symbols in defaults fragments are ignored.
+CONFIG_ESP_WIFI_ENABLED=n
+CONFIG_ESP_WIFI_REMOTE_ENABLED=n
+CONFIG_ESP_HOSTED_ENABLED=n
+CONFIG_ESP_NETIF_TCPIP_LWIP=n
+CONFIG_ETH_ENABLED=n
+CONFIG_ETH_USE_ESP32_EMAC=n
+CONFIG_ETH_USE_SPI_ETHERNET=n
+
 # Native RIPEMD-160 (mbedtls) for the _hashlib_ext component. Disabled by default
 # in ESP-IDF's mbedtls; embit's hash160 = ripemd160(sha256(x)) is on the BIP32
 # derivation + address-verification hot paths, so we build it native and route

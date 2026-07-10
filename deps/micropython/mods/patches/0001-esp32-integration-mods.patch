@@ -1,8 +1,29 @@
 diff --git a/ports/esp32/CMakeLists.txt b/ports/esp32/CMakeLists.txt
-index 9d6be8010..57eb69e02 100644
+index 9d6be8010..24e92d711 100644
 --- a/ports/esp32/CMakeLists.txt
 +++ b/ports/esp32/CMakeLists.txt
-@@ -58,6 +58,19 @@ endforeach()
+@@ -49,6 +49,20 @@ elseif (NOT MICROPY_FROZEN_MANIFEST)
+     set(MICROPY_FROZEN_MANIFEST ${CMAKE_CURRENT_LIST_DIR}/boards/manifest.py)
+ endif()
+ 
++# Optional extra sdkconfig fragment appended LAST (so it overrides everything
++# in the board chain). The builder uses this for its build profiles, e.g.
++# PROFILE=release -> sdkconfig.seedsigner_release (SPIRAM memtest off, log
++# levels down). Semicolon-separated list of absolute paths.
++if(DEFINED MICROPY_SDKCONFIG_EXTRA)
++    foreach(_extra_sdkconfig ${MICROPY_SDKCONFIG_EXTRA})
++        if(EXISTS "${_extra_sdkconfig}")
++            list(APPEND SDKCONFIG_DEFAULTS "${_extra_sdkconfig}")
++        else()
++            message(WARNING "MICROPY_SDKCONFIG_EXTRA entry not found: ${_extra_sdkconfig}")
++        endif()
++    endforeach()
++endif()
++
+ # Concatenate all sdkconfig files into a combined one for the IDF to use.
+ file(WRITE ${CMAKE_BINARY_DIR}/sdkconfig.combined.in "")
+ foreach(SDKCONFIG_DEFAULT ${SDKCONFIG_DEFAULTS})
+@@ -58,6 +72,58 @@ endforeach()
  configure_file(${CMAKE_BINARY_DIR}/sdkconfig.combined.in ${CMAKE_BINARY_DIR}/sdkconfig.combined COPYONLY)
  set(SDKCONFIG_DEFAULTS ${CMAKE_BINARY_DIR}/sdkconfig.combined)
  
@@ -18,6 +39,45 @@ index 9d6be8010..57eb69e02 100644
 +        endif()
 +    endforeach()
 +endif()
++
++# Offline firmware (MICROPY_DISABLE_NETWORK): exclude the entire radio/TCP-IP
++# component tree from component DISCOVERY. This is the only place
++# EXCLUDE_COMPONENTS is honored — it must be set at project level BEFORE
++# project.cmake is included (a copy set inside a component CMakeLists, e.g.
++# main/, runs after discovery and is silently ignored). Detection mirrors
++# esp32_common.cmake: the -D cache arg plus the environment-variable fallback
++# (script-mode passes can't see the cache).
++# NOTE: esp_netif / lwip / esp_netif_stack can only be excluded because the
++# builder patches the tinyusb managed component to drop its USB networking
++# classes and their esp_netif requirement (component_patches/tinyusb-*.patch);
++# excluding a component that a kept component still REQUIRES fails configure.
++set(_mp_proj_net_off "${MICROPY_DISABLE_NETWORK}")
++if(NOT _mp_proj_net_off AND DEFINED ENV{MICROPY_DISABLE_NETWORK})
++    set(_mp_proj_net_off "$ENV{MICROPY_DISABLE_NETWORK}")
++endif()
++if(_mp_proj_net_off)
++    list(APPEND EXCLUDE_COMPONENTS
++        # radio + TCP/IP core
++        esp_wifi esp_netif esp_netif_stack lwip esp_eth bt esp_hid
++        wpa_supplicant esp_coex ieee802154 openthread
++        # TLS/HTTP/OTA/provisioning application stacks
++        esp-tls esp_http_client esp_http_server esp_https_server esp_https_ota
++        tcp_transport mqtt protocomm protobuf-c http_parser
++        wifi_provisioning esp_local_ctrl
++        # managed network components (defensive: excluded even if a future
++        # manifest change re-adds them)
++        espressif__mdns espressif__esp_hosted espressif__esp_wifi_remote
++        espressif__eppp_link espressif__esp_serial_slave_link
++    )
++endif()
++# NOTE on the I/O expander (TCA9554): its per-board disable is handled
++# entirely in board_common (manifest `require: no` + a BOARD_HAS_IO_EXPANDER-
++# conditional REQUIRE). Do NOT try to EXCLUDE_COMPONENTS it here — components
++# fetched by the IDF component manager are re-added by the manager's own
++# integration and bypass EXCLUDE_COMPONENTS (verified empirically); the entry
++# would be dead machinery that looks load-bearing. As an unreferenced,
++# unlinked orphan it contributes zero bytes to the image.
++message(STATUS "PROJECT_EXCLUDE_COMPONENTS=${EXCLUDE_COMPONENTS}")
 +
  # Include main IDF cmake file.
  include($ENV{IDF_PATH}/tools/cmake/project.cmake)
@@ -35,29 +95,41 @@ index 6c8368ac4..2a6323da7 100644
  # ESP System Settings
  # Only on: ESP32, ESP32S3
 diff --git a/ports/esp32/esp32_common.cmake b/ports/esp32/esp32_common.cmake
-index e3b1b81ca..bc41c870e 100644
+index e3b1b81ca..8447c7307 100644
 --- a/ports/esp32/esp32_common.cmake
 +++ b/ports/esp32/esp32_common.cmake
-@@ -107,6 +107,18 @@ if(MICROPY_PY_TINYUSB)
+@@ -107,6 +107,30 @@ if(MICROPY_PY_TINYUSB)
          ${MICROPY_BOARD_DIR})
  endif()
  
 +# Global build toggle: strip all networking/Wi-Fi from ESP32 port sources/components.
-+# Enable with: CMAKE_ARGS='-DMICROPY_DISABLE_NETWORK=ON'
++# Enable with: CMAKE_ARGS='-DMICROPY_DISABLE_NETWORK=ON' AND the environment
++# variable MICROPY_DISABLE_NETWORK=1 (build_firmware.sh sets both).
++#
++# WHY the env var: ESP-IDF evaluates component CMakeLists an extra time in
++# SCRIPT MODE during early component expansion, and the REQUIRES collected in
++# that pass feed the component dependency graph. -D cache variables do NOT
++# exist in script mode, so with only the -D this file reports the networked
++# IDF_COMPONENTS list in the early pass — the network components then enter
++# the graph and compile (harmlessly unlinked, but present). The environment
++# variable IS visible in script mode, so both passes agree and the network
++# components never enter the build at all.
 +option(MICROPY_DISABLE_NETWORK "Disable networking/Wi-Fi stack in ESP32 MicroPython build" OFF)
 +set(_MICROPY_NET_OFF FALSE)
-+if(DEFINED MICROPY_DISABLE_NETWORK)
-+  string(TOUPPER "${MICROPY_DISABLE_NETWORK}" _mp_net_val)
-+  if(_mp_net_val STREQUAL "ON" OR _mp_net_val STREQUAL "1" OR _mp_net_val STREQUAL "TRUE" OR _mp_net_val STREQUAL "Y")
-+    set(_MICROPY_NET_OFF TRUE)
-+  endif()
++set(_mp_net_val "${MICROPY_DISABLE_NETWORK}")
++if(NOT _mp_net_val AND DEFINED ENV{MICROPY_DISABLE_NETWORK})
++  set(_mp_net_val "$ENV{MICROPY_DISABLE_NETWORK}")
 +endif()
-+message(STATUS "MICROPY_DISABLE_NETWORK=${MICROPY_DISABLE_NETWORK} _MICROPY_NET_OFF=${_MICROPY_NET_OFF}")
++string(TOUPPER "${_mp_net_val}" _mp_net_val)
++if(_mp_net_val STREQUAL "ON" OR _mp_net_val STREQUAL "1" OR _mp_net_val STREQUAL "TRUE" OR _mp_net_val STREQUAL "Y")
++  set(_MICROPY_NET_OFF TRUE)
++endif()
++message(STATUS "MICROPY_DISABLE_NETWORK=${MICROPY_DISABLE_NETWORK} ENV{MICROPY_DISABLE_NETWORK}=$ENV{MICROPY_DISABLE_NETWORK} _MICROPY_NET_OFF=${_MICROPY_NET_OFF}")
 +
  list(APPEND MICROPY_SOURCE_PORT
      panichandler.c
      adc.c
-@@ -145,6 +157,24 @@ list(APPEND MICROPY_SOURCE_PORT
+@@ -145,6 +169,24 @@ list(APPEND MICROPY_SOURCE_PORT
      machine_sdcard.c
      modespnow.c
  )
@@ -82,7 +154,7 @@ index e3b1b81ca..bc41c870e 100644
  list(TRANSFORM MICROPY_SOURCE_PORT PREPEND ${MICROPY_PORT_DIR}/)
  list(APPEND MICROPY_SOURCE_PORT ${CMAKE_BINARY_DIR}/pins.c)
  
-@@ -159,43 +189,81 @@ list(APPEND MICROPY_SOURCE_QSTR
+@@ -159,43 +201,81 @@ list(APPEND MICROPY_SOURCE_QSTR
      ${MICROPY_SOURCE_TINYUSB}
  )
  
@@ -201,7 +273,7 @@ index e3b1b81ca..bc41c870e 100644
  
  # Provide the default LD fragment if not set
  if (MICROPY_USER_LDFRAGMENTS)
-@@ -213,6 +281,15 @@ if (UPDATE_SUBMODULES)
+@@ -213,6 +293,15 @@ if (UPDATE_SUBMODULES)
      unset(MICROPY_INC_CORE)
  endif()
  
@@ -217,7 +289,7 @@ index e3b1b81ca..bc41c870e 100644
  # Register the main IDF component.
  idf_component_register(
      SRCS
-@@ -269,9 +346,11 @@ target_compile_options(${MICROPY_TARGET} PUBLIC
+@@ -269,9 +358,11 @@ target_compile_options(${MICROPY_TARGET} PUBLIC
  )
  
  # Additional include directories needed for private NimBLE headers.
@@ -232,7 +304,7 @@ index e3b1b81ca..bc41c870e 100644
  if (IDF_VERSION VERSION_LESS "5.3")
  # Additional include directories needed for private RMT header.
  #  IDF 5.x versions before 5.3.1
-@@ -290,16 +369,24 @@ target_link_libraries(${MICROPY_TARGET} usermod)
+@@ -290,16 +381,24 @@ target_link_libraries(${MICROPY_TARGET} usermod)
  # Extra linker options
  # (when wrap symbols are in standalone files, --undefined ensures
  # the linker doesn't skip that file.)
@@ -267,8 +339,404 @@ index e3b1b81ca..bc41c870e 100644
  
  # Collect all of the include directories and compile definitions for the IDF components,
  # including those added by the IDF Component Manager via idf_components.yaml.
+diff --git a/ports/esp32/lockfiles/dependencies.lock.esp32p4 b/ports/esp32/lockfiles/dependencies.lock.esp32p4
+index aea6ec2cc..1cc0becfa 100644
+--- a/ports/esp32/lockfiles/dependencies.lock.esp32p4
++++ b/ports/esp32/lockfiles/dependencies.lock.esp32p4
+@@ -1,30 +1,122 @@
+ dependencies:
+-  espressif/eppp_link:
+-    component_hash: 41f6519edda527ec6a0553c872ebaf8fc6d3812523c9d4c8d1660ad21c720abe
++  XPowersLib:
++    component_hash: 9ee20240a790f618333a40597d0386b740e11a906ee9cb0b53702b4a3647d0b4
++    dependencies: []
++    source:
++      git: https://github.com/lewisxhe/XPowersLib.git
++      path: .
++      type: git
++    version: b98c7f942e0a9392a9b3ecc614d54a12c72fb2d3
++  espressif/cmake_utilities:
++    component_hash: 351350613ceafba240b761b4ea991e0f231ac7a9f59a9ee901f751bddc0bb18f
++    dependencies:
++    - name: idf
++      require: private
++      version: '>=4.1'
++    source:
++      registry_url: https://components.espressif.com
++      type: service
++    version: 0.5.3
++  espressif/esp32-camera:
++    component_hash: bc9c8a6b51df777a014fa295825b3de5069bc0300c317acff20c97cf4a10ac7d
+     dependencies:
+-    - name: espressif/esp_serial_slave_link
++    - name: espressif/esp_jpeg
+       registry_url: https://components.espressif.com
++      require: public
++      version: ^1.3.1
++    - name: idf
+       require: private
+-      version: ^1.1.0
++      version: '>=5.1'
++    source:
++      registry_url: https://components.espressif.com/
++      type: service
++    version: 2.1.7
++  espressif/esp_cam_sensor:
++    component_hash: 7b110b08542aeae833895dacd74425e926dd36eed68ae1a26f2b6109e04ea984
++    dependencies:
++    - name: espressif/cmake_utilities
++      registry_url: https://components.espressif.com
++      require: private
++      version: 0.*
++    - name: espressif/esp_sccb_intf
++      registry_url: https://components.espressif.com
++      require: private
++      version: '>=0.0.2'
+     - name: idf
+       require: private
+-      version: '>=5.2'
++      version: '>=5.3'
++    source:
++      registry_url: https://components.espressif.com/
++      type: service
++    targets:
++    - esp32p4
++    version: 0.9.0
++  espressif/esp_codec_dev:
++    component_hash: 0d9e9bc288156eb55f79338d312e1ebf8c9dfbd5e7d13ef0f20ccb031b4e15cf
++    dependencies:
++    - name: idf
++      require: private
++      version: '>=4.0'
++    source:
++      registry_url: https://components.espressif.com/
++      type: service
++    version: 1.5.4
++  espressif/esp_h264:
++    component_hash: 5ccc09adefccabade1530b9dd106d07c3c96e991dc35b5516063165ef60c5646
++    dependencies:
++    - name: idf
++      require: private
++      version: '>=4.4'
+     source:
+       registry_url: https://components.espressif.com
+       type: service
+-    version: 1.1.3
+-  espressif/esp_hosted:
+-    component_hash: 53544436deb5fcbfdbf4a8e2c643cdbe31126556781784278c016d674df99cd2
++    targets:
++    - esp32s3
++    - esp32s31
++    - esp32p4
++    version: 1.3.6
++  espressif/esp_io_expander:
++    component_hash: 7b7f91270172e46ca4597e3874f48d8412e280e8c295559f5922ec38656e3e5f
+     dependencies:
+     - name: idf
+       require: private
+-      version: '>=5.3'
++      version: '>=4.4.2'
++    source:
++      registry_url: https://components.espressif.com
++      type: service
++    version: 1.2.1
++  espressif/esp_io_expander_tca9554:
++    component_hash: ee94a439ade1c17129a491efe572c600899306a2ffadbde491852d95333e28b4
++    dependencies:
++    - name: espressif/esp_io_expander
++      registry_url: https://components.espressif.com
++      require: public
++      version: ^1.2.0
++    - name: idf
++      require: private
++      version: '>=5.2'
+     source:
+       registry_url: https://components.espressif.com/
+       type: service
+-    version: 2.7.0
+-  espressif/esp_serial_slave_link:
+-    component_hash: ac1776806de0a6e371c84e87898bb983e19ce62aa7f1e2e5c4a3b0234a575d2c
++    version: 2.0.3
++  espressif/esp_ipa:
++    component_hash: 7547b050a99351a85aaba8ba38211c36fd4769c2ae3e570fa330dc90dfd2704c
++    dependencies:
++    - name: espressif/cmake_utilities
++      registry_url: https://components.espressif.com
++      require: private
++      version: 0.*
++    - name: idf
++      require: private
++      version: '>=5.4'
++    source:
++      registry_url: https://components.espressif.com
++      type: service
++    targets:
++    - esp32p4
++    version: 0.2.0
++  espressif/esp_jpeg:
++    component_hash: defb83669293cbf86d0fa86b475ba5517aceed04ed70db435388c151ab37b5d7
+     dependencies:
+     - name: idf
+       require: private
+@@ -32,37 +124,167 @@ dependencies:
+     source:
+       registry_url: https://components.espressif.com
+       type: service
+-    version: 1.1.2
+-  espressif/esp_wifi_remote:
+-    component_hash: 4ed1ebe454d63ddb4a91bbd8db74a6f883c85a863db1f79770c57fbd2e5c134c
++    version: 1.3.1
++  espressif/esp_lcd_axs15231b:
++    component_hash: 47abf98f02d444dc03e9b67d82209f70f7e13b1c4a8b4310e4caee34913abb6b
+     dependencies:
+-    - name: espressif/eppp_link
++    - name: espressif/cmake_utilities
+       registry_url: https://components.espressif.com
+       require: private
+-      version: '>=0.1'
+-    - name: espressif/esp_hosted
++      version: 0.*
++    - name: espressif/esp_lcd_touch
+       registry_url: https://components.espressif.com
+-      require: private
+-      rules:
+-      - if: target in [esp32h2, esp32p4]
+-      version: '>=0.0.6'
++      require: public
++      version: ^1
+     - name: idf
+       require: private
+       version: '>=5.3'
+     source:
+       registry_url: https://components.espressif.com/
+       type: service
+-    version: 0.15.2
+-  espressif/mdns:
+-    component_hash: 46ee81d32fbf850462d8af1e83303389602f6a6a9eddd2a55104cb4c063858ed
++    version: 2.1.0
++  espressif/esp_lcd_st7701:
++    component_hash: 924f346e36da39aaa38177e21bd360b5442abc792338fb64ad1e644481255898
+     dependencies:
++    - name: espressif/cmake_utilities
++      registry_url: https://components.espressif.com
++      require: private
++      version: 0.*
+     - name: idf
+       require: private
+-      version: '>=5.0'
++      version: '>=5.4'
++    source:
++      registry_url: https://components.espressif.com/
++      type: service
++    targets:
++    - esp32s3
++    - esp32s31
++    - esp32p4
++    version: 2.0.2~2
++  espressif/esp_lcd_st7796:
++    component_hash: 528a864b7dd447aa78472680a1f3e294c8045b4e64d479d176c3c66aa6f7edee
++    dependencies:
++    - name: espressif/cmake_utilities
++      registry_url: https://components.espressif.com
++      require: private
++      version: 0.*
++    - name: idf
++      require: private
++      version: '>=4.4'
++    source:
++      registry_url: https://components.espressif.com/
++      type: service
++    targets:
++    - esp32
++    - esp32s2
++    - esp32s3
++    - esp32p4
++    - esp32c3
++    version: 1.4.0
++  espressif/esp_lcd_touch:
++    component_hash: 3f85a7d95af876f1a6ecca8eb90a81614890d0f03a038390804e5a77e2caf862
++    dependencies:
++    - name: idf
++      require: private
++      version: '>=4.4.2'
++    source:
++      registry_url: https://components.espressif.com/
++      type: service
++    version: 1.2.1
++  espressif/esp_lcd_touch_cst816s:
++    component_hash: 51dfa9cee38d8a20f4b625d7f89120dff08c8557e613e09dfb31f53d48648235
++    dependencies:
++    - name: espressif/esp_lcd_touch
++      registry_url: https://components.espressif.com
++      require: public
++      version: ^1.0.4
++    - name: idf
++      require: private
++      version: '>=4.4.2'
+     source:
+       registry_url: https://components.espressif.com/
+       type: service
+     version: 1.1.0
++  espressif/esp_lcd_touch_ft5x06:
++    component_hash: aa3f170c321859146b4084d5e168828d026cb7c67eebfaa524ce48b428182c1e
++    dependencies:
++    - name: espressif/esp_lcd_touch
++      registry_url: https://components.espressif.com
++      require: public
++      version: ^1.2.0
++    - name: idf
++      require: private
++      version: '>=4.4.2'
++    source:
++      registry_url: https://components.espressif.com/
++      type: service
++    version: 1.1.0
++  espressif/esp_lcd_touch_gt911:
++    component_hash: 6029febef66eefd0910d527d7f30292779ccbf22a8dedd2bd69466acf0068a7b
++    dependencies:
++    - name: espressif/esp_lcd_touch
++      registry_url: https://components.espressif.com
++      require: public
++      version: ^1.2.0
++    - name: idf
++      require: private
++      version: '>=5.2'
++    source:
++      registry_url: https://components.espressif.com/
++      type: service
++    version: 1.2.0~2
++  espressif/esp_lvgl_port:
++    component_hash: b6360960f47b6776462e7092861b3ea66477ffb762a01baa0aecbb3d74cd50f4
++    dependencies:
++    - name: idf
++      require: private
++      version: '>=5.1'
++    - name: lvgl/lvgl
++      registry_url: https://components.espressif.com
++      require: public
++      version: '>=8,<10'
++    source:
++      registry_url: https://components.espressif.com/
++      type: service
++    version: 2.7.2
++  espressif/esp_sccb_intf:
++    component_hash: c071b189e49f40940722aea01a5489f873385cc39cd5b14012341135b85d1a9d
++    dependencies:
++    - name: idf
++      require: private
++      version: '>=5.3'
++    source:
++      registry_url: https://components.espressif.com
++      type: service
++    version: 0.0.8
++  espressif/esp_video:
++    component_hash: 37f7a3b16aa842e612180d5a4698db1c3bc36142a0b78664eb4ffe67c8cd0510
++    dependencies:
++    - name: espressif/cmake_utilities
++      registry_url: https://components.espressif.com
++      require: private
++      version: 0.*
++    - name: espressif/esp_cam_sensor
++      registry_url: https://components.espressif.com
++      require: private
++      version: 0.9.*
++    - name: espressif/esp_h264
++      registry_url: https://components.espressif.com
++      require: private
++      version: '>=1.0.3'
++    - name: espressif/esp_ipa
++      registry_url: https://components.espressif.com
++      require: private
++      version: 0.2.*
++    - name: idf
++      require: private
++      version: '>=5.4'
++    source:
++      registry_url: https://components.espressif.com/
++      type: service
++    targets:
++    - esp32p4
++    version: 0.8.0~3
+   espressif/tinyusb:
+     component_hash: ee1c962cff61eb975d508258d509974d58031cc27ff0d6c4117a67a613a49594
+     dependencies:
+@@ -82,12 +304,53 @@ dependencies:
+     source:
+       type: idf
+     version: 5.5.1
++  lvgl/lvgl:
++    component_hash: 184e532558c1c45fefed631f3e235423d22582aafb4630f3e8885c35281a49ae
++    dependencies: []
++    source:
++      registry_url: https://components.espressif.com/
++      type: service
++    version: 9.5.0
++  waveshare/pcf85063a:
++    component_hash: 9e0088c12613e5bb955e021c3526d82bf964b62dd383db5189c2ffaee7f637ef
++    dependencies:
++    - name: idf
++      require: private
++      version: '>=5.3.2'
++    source:
++      registry_url: https://components.espressif.com/
++      type: service
++    version: 1.1.1
++  waveshare/qmi8658:
++    component_hash: 0f849356dfdcd3c868ad37a74a2cbb00892c69b3b1b18854172715f6eb980e5b
++    dependencies:
++    - name: idf
++      require: private
++      version: '>=5.3.2'
++    source:
++      registry_url: https://components.espressif.com/
++      type: service
++    version: 1.0.1
+ direct_dependencies:
+-- espressif/esp_hosted
+-- espressif/esp_wifi_remote
+-- espressif/mdns
++- XPowersLib
++- espressif/esp32-camera
++- espressif/esp_cam_sensor
++- espressif/esp_codec_dev
++- espressif/esp_io_expander_tca9554
++- espressif/esp_lcd_axs15231b
++- espressif/esp_lcd_st7701
++- espressif/esp_lcd_st7796
++- espressif/esp_lcd_touch
++- espressif/esp_lcd_touch_cst816s
++- espressif/esp_lcd_touch_ft5x06
++- espressif/esp_lcd_touch_gt911
++- espressif/esp_lvgl_port
++- espressif/esp_video
+ - espressif/tinyusb
+ - idf
+-manifest_hash: 482087bc40f0e187795a9ef9ad08ef15a585b4cdabc296c715a9d19284622150
++- lvgl/lvgl
++- waveshare/pcf85063a
++- waveshare/qmi8658
++manifest_hash: dd555857d524dfa9add6e0f988cce6bcef7ed6381a2e050c8a4b22ca45c2fc73
+ target: esp32p4
+ version: 2.0.0
+diff --git a/ports/esp32/main.c b/ports/esp32/main.c
+index 12835f313..72d73323b 100644
+--- a/ports/esp32/main.c
++++ b/ports/esp32/main.c
+@@ -63,7 +63,12 @@
+ #include "usb_serial_jtag.h"
+ #include "modesp32.h"
+ #include "modmachine.h"
++// modnetwork.h drags in esp_wifi_types.h/esp_netif.h, whose components are
++// absent in offline builds (MICROPY_DISABLE_NETWORK). main.c only needs it
++// for socket_events_deinit(), which is MICROPY_PY_SOCKET_EVENTS-guarded.
++#if MICROPY_PY_NETWORK || MICROPY_PY_SOCKET_EVENTS
+ #include "modnetwork.h"
++#endif
+ 
+ #if MICROPY_BLUETOOTH_NIMBLE
+ #include "extmod/modbluetooth.h"
 diff --git a/ports/esp32/main/CMakeLists.txt b/ports/esp32/main/CMakeLists.txt
-index 40188abff..57a47b925 100644
+index 40188abff..6c1f5d855 100644
 --- a/ports/esp32/main/CMakeLists.txt
 +++ b/ports/esp32/main/CMakeLists.txt
 @@ -8,4 +8,18 @@ if(NOT MICROPY_PORT_DIR)
@@ -283,23 +751,45 @@ index 40188abff..57a47b925 100644
 +# __idf_esp-hashlib-ext post-hoc, so force-include them to get compiled.
 +list(APPEND IDF_COMPONENTS display_manager camera_scanner camera_entropy cUR esp-secp256k1 esp-hashlib-ext)
 +
-+# Force-exclude network stack components when building offline firmware.
-+if(MICROPY_DISABLE_NETWORK)
-+    set(EXCLUDE_COMPONENTS "${EXCLUDE_COMPONENTS};esp_wifi;esp_netif;lwip;bt;wpa_supplicant;esp_coex;tcp_transport;esp_http_client;esp_http_server;esp_https_server;esp_https_ota;wifi_provisioning;openthread;esp_local_ctrl;mqtt")
-+endif()
-+message(STATUS "MAIN_EXCLUDE_COMPONENTS=${EXCLUDE_COMPONENTS}")
++# NOTE: do NOT set EXCLUDE_COMPONENTS here. It is only honored at project
++# level before project.cmake is included — the network-strip exclusion lives
++# in ports/esp32/CMakeLists.txt (see MICROPY_DISABLE_NETWORK there). A copy
++# set in this file runs after component discovery and is silently ignored
++# (which is why the original network-strip attempt never worked).
 +
  include(${MICROPY_PORT_DIR}/esp32_common.cmake)
 diff --git a/ports/esp32/main/idf_component.yml b/ports/esp32/main/idf_component.yml
-index 176e29c3c..24874bccf 100644
+index 176e29c3c..1c8c36f5b 100644
 --- a/ports/esp32/main/idf_component.yml
 +++ b/ports/esp32/main/idf_component.yml
-@@ -1,4 +1,8 @@
+@@ -1,5 +1,14 @@
  dependencies:
+-  espressif/mdns: "~1.1.0"
 +  lvgl/lvgl: "9.5.0"
 +  espressif/esp_lvgl_port: "2.7.2"
 +  espressif/esp_lcd_touch: "1.2.1"
 +  espressif/esp_codec_dev: "1.5.4"
-   espressif/mdns: "~1.1.0"
++  # SeedSigner: network managed deps removed for the offline-only firmware.
++  #  - espressif/mdns transitively requires lwip + esp_netif, re-pulling the
++  #    network stack even when those components are excluded.
++  #  - espressif/esp_hosted + esp_wifi_remote are the ESP32-P4 -> ESP32-C6
++  #    radio transport (SDIO); removing them keeps the C6 co-processor
++  #    un-driven (inert) and drops eppp_link/protocomm/esp_serial_slave_link.
    espressif/tinyusb:
+     rules:
+       - if: "target in [esp32s2, esp32s3, esp32p4]"
+@@ -7,14 +16,6 @@ dependencies:
+     # Can be removed once fix is released in espressif/tinyusb
+     git: https://github.com/micropython/tinyusb-espressif.git
+     version: cherrypick/dwc2_zlp_fix
+-  espressif/esp_hosted:
+-    rules:
+-      - if: "target == esp32p4"
+-    version: "2.7.0"
+-  espressif/esp_wifi_remote:
+-    rules:
+-      - if: "target == esp32p4"
+-    version: "0.15.2"
+   espressif/lan867x:
+     version: "~1.0.0"
      rules:
