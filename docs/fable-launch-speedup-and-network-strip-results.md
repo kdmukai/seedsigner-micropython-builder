@@ -8,9 +8,9 @@ Board: `WAVESHARE_ESP32_P4_WIFI6_TOUCH_LCD_43` only.
 
 | Priority | Branch | State |
 |---|---|---|
-| P1 network strip | `feat/p4-network-strip` | IN PROGRESS — baseline captured |
-| P2 dependency prune | (not started) | pending |
-| P3 launch speedup | (not started) | pending — baseline timing being measured |
+| P1 network strip | `feat/p4-network-strip` | **COMPLETE** — static + runtime proof + device regression all-PASS |
+| P2 dependency prune | `feat/p4-network-strip` (stacked commits) | **COMPLETE** — expander gate landed; inventory documented (image already minimal via dead-stripping) |
+| P3 launch speedup | `feat/p4-network-strip` (stacked commits) | release profile built; measuring (P1 alone already: 10.95→10.08 s) |
 
 `main` is untouched at c005e0d (PR #27 merge). Nothing pushed/merged/PR'd.
 
@@ -152,6 +152,81 @@ start/stream/UI/stop all verified). Physical touch *taps* can't be automated —
 
 **P1 status: COMPLETE** — static proof + runtime proof + regression on device. Commits `a85ffc0`
 (strip), `b39c7e2` (board_common bump; submodule commit `2dc1f44` on `feat/radio-coproc-hold-in-reset`).
+
+## P2 — dependency prune (COMPLETE)
+
+**Central finding: the image was already effectively minimal.** With `-ffunction-sections` +
+linker dead-stripping, every suspect component places **zero bytes** in the final image:
+`esp_codec_dev` (audio), `esp_h264`, the other boards' LCD drivers (axs15231b, st7796) and touch
+drivers (cst816s, ft5x06), `XPowersLib` (PMIC — P4-43 has none), `pcf85063a` (RTC), `qmi8658`
+(IMU), `esp_io_expander(_tca9554)`, cmock/unity/app_trace/esp_gdbstub, and all unused
+`esp_driver_*` peripherals (twai/mcpwm/pcnt/sdm/parlio/dac/...). Baseline's only *real* unwanted
+image tenant was the network stack — P1's job. **Graph-level exclusion of zero-byte components was
+deliberately skipped** (machinery-for-nothing; each exclusion risks a REQUIRES-resolution fight).
+
+**I/O-expander compile gate (the P2 deliverable) — landed:**
+- `board_common/idf_component.yml`: `require: no` on the tca9554 dep — the component manager
+  otherwise **force-injects manifest deps as requirements on every board**, bypassing any CMake
+  condition (this was found empirically; a conditional REQUIRE alone did nothing).
+- `board_common/CMakeLists.txt`: REQUIRE added only when the board's `board_config.h` sets
+  `BOARD_HAS_IO_EXPANDER 1` (parsed with an `ENV{BOARD_CONFIG_DIR}` fallback for IDF's
+  script-mode pass; `build_firmware.sh` exports it).
+- **Re-enable knob:** a future board sets `BOARD_HAS_IO_EXPANDER 1` (+ addr/reset pin) in its
+  `board_config.h` — nothing else.
+- Residue: the component still *compiles* as an unreferenced orphan archive (zero bytes linked) —
+  manager-fetched components bypass `EXCLUDE_COMPONENTS` (verified; documented in the patch
+  rather than leaving dead exclude machinery).
+- ⚠ **S3 boards keep the expander** (they set `1`) but their next build should be
+  compile-verified — the manifest/REQUIRE change affects all boards.
+
+Component inventory (post-P1 link, all zero-byte unless noted): kept-and-used = freertos/heap/
+soc/hal/esp_hw_support/esp_system/esp_rom/esp_timer/newlib/spi_flash/esp_partition/esp_mm/
+esp_psram/bootloader_support/app_update/nvs_flash/driver+esp_driver_{gpio,i2c,i2s,uart,spi,ledc,
+sdmmc,sdspi,isp,cam,ppa,jpeg,usb_serial_jtag,touch_sens,tsens,rmt}/esp_adc/esp_pm/esp_ringbuf/
+esp_event/mbedtls/sdmmc/vfs/usb/tinyusb(patched)/esp_lcd/lvgl/esp_lvgl_port/esp_lcd_touch(+gt911)/
+esp_video/esp_cam_sensor(ov5647)/esp_ipa/espcoredump/esp_vfs_console/console-deps + ours
+(display_manager, camera_scanner/entropy, board_common, esp-camera-pipeline, k_quirc, cUR,
+esp-secp256k1, esp-hashlib-ext, seedsigner screens, board_log_flash). Boot/flash/partition/loader
+plumbing untouched per the SD-boot forward-compat constraint.
+
+## P3 — launch speedup (COMPLETE)
+
+**Mechanism:** `PROFILE=release` in `build_firmware.sh` → appends
+`ports/esp32/profiles/sdkconfig.release` LAST in the sdkconfig chain (new generic
+`MICROPY_SDKCONFIG_EXTRA` hook in the MicroPython patch). Default stays the maximal-debug dev
+profile. Release cuts: `SPIRAM_MEMTEST=n` (~0.4–0.8 s), app+bootloader logs to WARN (compiled max
+WARN — safely *below* the camera's INFO ceiling), `ESP_ERR_TO_NAME_LOOKUP=n`, `EH_FRAME=n`,
+`CAM_PIPELINE_DEBUG=n`, LVGL log/asserts off. **Kept in release:** coredump-to-flash, task WDT +
+panic, FreeRTOS stack canaries (cheap, field-valuable).
+
+**Measured results (power-on → OpeningSplash logo-slide; video luma method, serial-corroborated):**
+
+| Build | Launch | Δ |
+|---|---|---|
+| Baseline (networked, dev profile) | **10.95 s** | — |
+| P1 network strip (dev profile) | **10.08 s** | −0.87 s |
+| P1+P2+release profile | **9.60 s** | −1.35 s total (−12%) |
+
+**Phase anatomy (release build):** reset → display-init +1.8 s (was +2.6 s) → static C-logo held →
+slide at +9.6 s. The Python phase barely moved, and it dominates:
+
+| Python-phase milestone (`[boot-ms]` instrumentation in `/main.py`) | dev | release |
+|---|---|---|
+| VM up → `main.py` starts | ~0.5 s after board init | same |
+| `import seedsigner.controller` | **5.76 s** | **5.82 s** |
+| `Controller.get_instance()` | 0.49 s | 0.49 s |
+| `start()` → slide | ~0.5–1.0 s | same |
+
+**→ The single dominant launch cost is the app-side `import seedsigner.controller` chain (~5.8 s,
+~60% of the total).** Per the brief this is measure-and-report-only for this run (app repo, separate
+session). The `[boot-ms]` milestones are now baked into `deploy_app.py`'s `/main.py` template, so
+every future deploy reports the split for free. Firmware-side headroom left: ~1.8 s
+(ROM+bootloader+IDF init+display) — mostly irreducible without deeper work (the 100 ms
+`vTaskDelay` in board startup was left alone; it's inside the now-1.8 s slice and load-bearing for
+the pre-backlight flush).
+
+**Release-build regression:** core battery (net-absence, SD, crypto KATs, secp sign/verify) +
+camera session re-run on the release build — all PASS; Home webcam-verified.
 
 ## Decisions made
 
