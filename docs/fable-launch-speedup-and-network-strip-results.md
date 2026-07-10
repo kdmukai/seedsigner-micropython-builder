@@ -4,20 +4,39 @@
 Run started 2026-07-10 (overnight). Executor: Fable 5. Brief: `docs/fable-launch-speedup-and-network-strip-todo.md`.
 Board: `WAVESHARE_ESP32_P4_WIFI6_TOUCH_LCD_43` only.
 
-## Status snapshot
+## Status snapshot — ALL THREE PRIORITIES COMPLETE (run finished 2026-07-10, ~07:15 UTC)
 
-| Priority | Branch | State |
-|---|---|---|
-| P1 network strip | `feat/p4-network-strip` | **COMPLETE** — static + runtime proof + device regression all-PASS |
-| P2 dependency prune | `feat/p4-network-strip` (stacked commits) | **COMPLETE** — expander gate landed; inventory documented (image already minimal via dead-stripping) |
-| P3 launch speedup | `feat/p4-network-strip` (stacked commits) | release profile built; measuring (P1 alone already: 10.95→10.08 s) |
+| Priority | State |
+|---|---|
+| P1 network strip | **COMPLETE** — zero network components compiled/linked; C6 held in reset; runtime proof + device regression all-PASS |
+| P2 dependency prune | **COMPLETE** — expander compile gate landed; inventory documented (image already minimal via dead-stripping) |
+| P3 launch speedup | **COMPLETE** — release profile mechanism + measured **10.95 → 9.60 s**; dominant remaining cost identified (app import chain, ~5.8 s) |
 
-`main` is untouched at c005e0d (PR #27 merge). Nothing pushed/merged/PR'd.
+**Final gate PASSED:** MicroPython submodule restored clean, then a full clean-tree
+`make docker-build-all` from the committed branch state rebuilt successfully with the strip active
+(0 network archives in the map) — the branch is reproducible from scratch.
+
+`main` is untouched at c005e0d. Nothing pushed/merged/PR'd anywhere.
+
+**Device end-state:** release-profile firmware + instrumented `/main.py`, app d4a2125 intact,
+boots to Home in ~12 s wall. Demo-usable.
 
 ## Branches & commits
 
-- `feat/p4-network-strip`
-  - `3d5d891` chore(deps): bump seedsigner-lvgl-screens to upstream main (267cc64) — picks up screens PRs #64/#65/#66. **Build-verified** (full docker-build-all incl. screenshot generator, 123 scenarios OK).
+- **Builder** `feat/p4-network-strip` (off `main` c005e0d):
+  - `3d5d891` chore(deps): screens submodule → upstream main 267cc64 (PRs #64/#65/#66)
+  - `c27b739` docs: baseline (component/symbol audit + 10.9 s launch timing)
+  - `a85ffc0` feat(p1): strip the radio/TCP-IP stack from the firmware build entirely
+  - `b39c7e2` chore(deps): board_common bump (C6 held in reset on P4-43)
+  - `7e5624d` docs(p1): runtime validation complete — device regression all-PASS
+  - `52cede8` feat(p2+p3): I/O-expander compile gate, release profile, boot milestones
+  - `c0e7ed5` docs(p3): launch results + anatomy writeup; Makefile PROFILE passthrough
+- **board_common** (`ports/esp32/board_common` checkout) `feat/radio-coproc-hold-in-reset` (off main ed9a988):
+  - `2dc1f44` feat(boards): hold the radio co-processor in reset at board init (air gap)
+  - `b27475e` feat(build): compile the TCA9554 I/O expander only for boards that have one
+  - Suggested review order: **PR board_common first**, merge, then re-pin the builder's
+    submodule pointer to the merged SHA (currently points at the local branch commit) before
+    the builder PR.
 
 ## Baseline (before any strip) — captured 2026-07-10
 
@@ -241,6 +260,17 @@ camera session re-run on the release build — all PASS; Home webcam-verified.
 
 - `authorize-git` writes its flag file to the shell's cwd — first authorization stranded a stale `.claude-auto-commit` in `deps/seedsigner-lvgl-screens/` (hook blocks moving/deleting it). **User: delete it manually.** Re-ran from repo root; gate live.
 
-## Recommended next steps (if this run stops here)
+## Recommended next steps
 
-- Continue P1 per the brief: probe `-DMICROPY_DISABLE_NETWORK=ON` build, remove mdns from `idf_component.yml`, add sdkconfig `=n` overrides.
+1. **Review + merge**: board_common PR first → re-pin builder submodule to the merged SHA → builder PR.
+2. **S3 compile check** (⚠ before any S3 work): the strip defaults ON for all boards and the
+   expander `require: no` change affects every board — S3 targets were out of scope tonight and
+   are build-unverified. `BOARD=WAVESHARE_ESP32_S3_TOUCH_LCD_35B make docker-build-all`.
+3. **The 5.8 s prize**: a seedsigner-repo session on the `import seedsigner.controller` chain
+   (lazy imports / deferring module-level work). The `[boot-ms]` milestones in every deploy make
+   progress directly measurable. This is now ~60% of the launch.
+4. Small leftovers: delete the stale `.claude-auto-commit` in `deps/seedsigner-lvgl-screens/`
+   (hook blocks the agent from removing it); consider `BOARD_RADIO_COPROC_RESET_PIN` for the
+   P4-35 board (also a C6 board) when it's next touched; camera QR *decode* and physical touch
+   taps remain human-regression items (pipeline/init validated tonight).
+5. Release cadence: `PROFILE=release` is opt-in; decide when/whether CI should build both profiles.
