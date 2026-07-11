@@ -9,6 +9,51 @@ CONFIG_SPI_SLAVE_ISR_IN_IRAM=y
 CONFIG_SPIRAM_MEMTEST=y
 CONFIG_SPIRAM_IGNORE_NOTFOUND=n
 
+# ── Camera (MIPI-CSI, OV5647) ──────────────────────────────────────────────
+# The esp_video CSI/ISP video devices are pulled in by board_common, but the
+# SENSOR DRIVER (esp_cam_sensor OV5647) and the ISP pipeline controller are
+# per-application Kconfig — board_common's shared fragment only carries pins, so
+# each app enables them in its own sdkconfig (e.g. scan_coord_test). Without the
+# sensor driver, esp_video_init() returns OK but detects no sensor and registers
+# NO /dev/video0, so cam_pipeline_create() fails at open("/dev/video0"). These
+# three match scan_coord_test's proven set (the camera_scanner module needs them).
+# See docs/knowledge/esp32-p4-camera-missing-sensor-kconfig.md.
+CONFIG_CAMERA_OV5647=y
+CONFIG_CAMERA_OV5647_MIPI_RAW10_1280x960_BINNING_45FPS=y
+CONFIG_ESP_VIDEO_ENABLE_ISP_PIPELINE_CONTROLLER=y
+# Camera RUNTIME requirements (also from scan_coord_test). Without these the
+# sensor is detected but stream-start hangs/crashes:
+#  - Backup buffer ENABLED (default-disabled elsewhere): the CSI driver needs its
+#    internal DMA backup buffer or the first frame stalls and the priming DQBUF in
+#    cam_pipeline_create() blocks forever (the start() hang observed on device).
+#  - Timer task stack 4096: the ISP pipeline controller runs on the FreeRTOS timer
+#    task; the 2048 default overflows.
+CONFIG_ESP_VIDEO_DISABLE_MIPI_CSI_DRIVER_BACKUP_BUFFER=n
+CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH=4096
+# CSI auto-exposure target (0 = ISP default; bright image decodes a binary QR best).
+CONFIG_BOARD_CSI_AE_TARGET=0
+# k_quirc contrast stretch (decode tuning, matches scan_coord_test).
+CONFIG_K_QUIRC_CONTRAST_STRETCH=y
+# Route k_quirc decoder context + flood-fill scratch to PSRAM: keeps their ~80 KB
+# internal-RAM footprint off the fragmented internal heap so the camera QR-decode task
+# stack can reserve its contiguous block (defense-in-depth for the QR-task internal-RAM
+# starvation fix; opt-in flag, default off upstream).
+CONFIG_K_QUIRC_SCRATCH_IN_PSRAM=y
+
+# ── Orientation ────────────────────────────────────────────────────────────
+# The firmware runs the display in LANDSCAPE at runtime (display_manager.cpp
+# calls board_init({.landscape=true})). On this board's ST7796 the rotation
+# itself is hardware MADCTL (esp_lcd_panel_swap_xy/mirror in board_init.c), but
+# the compile-time convenience macros BOARD_DISP_H_RES/V_RES and the
+# camera-rotation compensation in board_pipeline.c are gated on
+# CONFIG_BOARD_LANDSCAPE. Without it those macros stay PORTRAIT (320x480) and
+# the camera loses its landscape rotation — so the live preview appears 90°
+# rotated and the camera_scanner overlay (which sizes/places the status bar
+# from BOARD_DISP_*_RES) lands off-screen. Every bare board_common app sets
+# this in its sdkconfig.landscape; the firmware needs it too.
+# See docs/knowledge/esp32-p4-landscape-preview-fps-lock-contention.md.
+CONFIG_BOARD_LANDSCAPE=y
+
 # LVGL fonts
 CONFIG_LV_FONT_MONTSERRAT_20=y
 CONFIG_LV_FONT_MONTSERRAT_22=y
@@ -24,18 +69,166 @@ CONFIG_LV_USE_REFR_DEBUG=n
 # (while working on the Pi Zero, whose LVGL build enables it).
 CONFIG_LV_USE_QRCODE=y
 
+# LVGL builtin allocator pool (LV_USE_BUILTIN_MALLOC). Every LVGL object, style,
+# and per-font tiny_ttf glyph cache is allocated from this one fixed internal-DRAM
+# pool. The 64 KB Kconfig default is too small: the app's largest screen (Settings →
+# Advanced, 18 buttons) plus the persistent glyph caches of every font visited in a
+# session peak near the limit, so a later allocation can return NULL. The board has
+# ~300 KB of internal DRAM free, so size the pool to clear that peak with headroom
+# while keeping objects/caches in fast internal RAM (only glyph bitmaps go to PSRAM).
+CONFIG_LV_MEM_SIZE_KILOBYTES=128
+
+# i18n language-pack rendering (matches the desktop/Pi-Zero i18n build):
+#  - TINY_TTF: rasterize the OpenSans Western baked floor + loaded pack .ttf at runtime
+#  - FONT_FMT_TXT_LARGE: large glyph tables (CJK subsets exceed the 16-bit offsets)
+#  - BIDI + ARABIC_PERSIAN_CHARS: right-to-left + Arabic/Persian (fa) joining/shaping
+CONFIG_LV_USE_TINY_TTF=y
+CONFIG_LV_FONT_FMT_TXT_LARGE=y
+CONFIG_LV_USE_BIDI=y
+CONFIG_LV_USE_ARABIC_PERSIAN_CHARS=y
+
+# tiny_ttf kerning cache: DISABLED. Fonts use LV_FONT_KERNING_NONE, but tiny_ttf still
+# routes the per-glyph default advance through a SEPARATE 256-entry kerning cache whose
+# size ignores SEEDSIGNER_TTF_CACHE_SIZE — pure duplication of node->adv_w (already kept
+# in the glyph cache) on the constrained internal LVGL pool. 0 triggers tiny_ttf's
+# no-cache bypass (compute inline), removing the redundant per-(font,px) index with no
+# functional change. Measured 2026-06-25 as the dominant internal-pool tenant that the
+# cache-size cap could not touch. See docs/font-memory-plan.md Task E + docs/knowledge/
+# cjk-glyph-cache-pool-overflow.md.
+CONFIG_LV_TINY_TTF_CACHE_KERNING_CNT=0
+
+# NB: SD-card long filenames (e.g. zh_Hans_CN/zh_Hans_CN.ttf) are handled by
+# MicroPython's own FAT VFS (lib/oofatfs; MICROPY_FATFS_ENABLE_LFN=1), not
+# ESP-IDF's fatfs — the two can't be linked together (duplicate f_mount/...).
+
+# ── Debugging (maximal) ───────────────────────────────────────────────────
+# Built for maximum diagnosability across all our efforts: readable backtraces,
+# assertions, heap + stack integrity checks, coredump-to-flash + serial panic
+# backtrace, and task-WDT panic so hangs/deadlocks leave a usable trail.
+# See docs/knowledge/esp32-p4-debug-build.md.
+
+# Keep board_common's -O2 (PERF). NB: -Og (COMPILER_OPTIMIZATION_DEBUG) trips a
+# -Werror=maybe-uninitialized in MicroPython's upstream esp32_rmt.c, which the IDF
+# default -Werror=all turns into a build failure. The eh_frame backtraces +
+# coredump + asserts below give strong debuggability without it.
+#
+# Do NOT enable COMPILER_STACK_CHECK (-fstack-protector*): the canary epilogues are
+# incompatible with MicroPython's NLR (setjmp/longjmp exceptions) — it longjmps out
+# of functions, so EVERY exception breaks with "exceptions must derive from
+# BaseException" and the REPL can't run a single statement. FreeRTOS task-stack
+# canaries below give stack-overflow detection without touching the C epilogues.
+
+# C++ exceptions ENABLED (bring-up diagnosability): the screens library reports
+# config/render errors by THROWING; run_screen catches and surfaces them as a
+# Python ValueError naming the failure. With the IDF default (exceptions off)
+# the linker wraps __cxa_allocate_exception into an abort stub, so ANY screen
+# throw kills the chip with an uninformative abort-cascade backtrace instead.
+# See docs/knowledge/cxx-exceptions-disabled-native-throws-abort.md.
+CONFIG_COMPILER_CXX_EXCEPTIONS=y
+
+# RISC-V: print a readable call-stack backtrace on panic (DWARF .eh_frame), and
+# resolve esp_err_t codes to names.
+CONFIG_ESP_SYSTEM_USE_EH_FRAME=y
+CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT=y
+CONFIG_ESP_ERR_TO_NAME_LOOKUP=y
+
+# Coredump to flash (ELF) — uses the 'coredump' partition. Task stacks + registers
+# are enough for backtraces; DRAM capture is left off to keep dumps small/fast.
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
+CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y
+
+# Task watchdog → PANIC on a hung task so spin-hangs/deadlocks produce a coredump
+# + serial backtrace (e.g. an LVGL-task render hang).
+CONFIG_ESP_TASK_WDT_EN=y
+CONFIG_ESP_TASK_WDT_INIT=y
+CONFIG_ESP_TASK_WDT_PANIC=y
+# Idle-task WDT checks OFF: the CSI camera's DQBUF blocks the idle task during
+# streaming (scan_coord_test disables the WDT entirely for this). We keep the WDT
+# + panic so genuine task hangs/deadlocks still produce a coredump+backtrace, and
+# only exempt the idle tasks so normal camera streaming doesn't false-panic.
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=n
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=n
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
 
-# Partition table
+# Heap integrity: IDF heap poisoning is DISABLED. Both LIGHT and COMPREHENSIVE
+# fault at boot on the P4 build — a Load-access-fault in multi_heap_internal_lock
+# on the very first malloc after heap_init (before app code), i.e. a poisoning vs.
+# P4 heap-config incompatibility (likely SPIRAM_XIP_FROM_PSRAM / a special heap
+# region), not our code. The non-poisoned build boots + runs fine. We rely on the
+# LVGL asserts below (mem-integrity/null/obj) — better targeted at the LVGL
+# render/font path anyway — plus WDT-panic + coredump. See
+# docs/knowledge/esp32-p4-debug-build.md.
+CONFIG_HEAP_POISONING_NONE=y
+
+# FreeRTOS stack-overflow detection.
+CONFIG_FREERTOS_CHECK_STACKOVERFLOW_CANARY=y
+CONFIG_FREERTOS_WATCHPOINT_END_OF_STACK=y
+
+# Logging: INFO, compiled-in maximum also INFO (NOT verbose).
+#
+# CRITICAL for the camera: esp_video's CSI DMA-done path logs at DEBUG from
+# INTERRUPT context (csi_video_on_trans_finished, per DMA transfer). ESP_LOGx
+# checks esp_log_is_tag_loggable(), which takes the log mutex (xQueueSemaphoreTake)
+# — illegal in an ISR. With VERBOSE compiled in, that ESP_LOGD is emitted, the ISR
+# blocks on the mutex with interrupts disabled, and the board dies with an
+# "Interrupt wdt timeout on CPU1" the moment the camera streams. Capping the
+# compiled-in maximum at INFO makes ESP_LOGD/V no-ops at compile time, so the ISR
+# never touches the log lock (this is why scan_coord_test, which never enabled
+# verbose, runs the same camera fine). Also kills the ISP IPA per-frame auto-
+# exposure/histogram DEBUG flood. Trade-off: no runtime tag-bump to VERBOSE; flip
+# back ONLY for non-camera debugging. See docs/knowledge/esp32-p4-camera-*.
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_MAXIMUM_LEVEL_INFO=y
+
+# Camera pipeline fps/timing instrumentation. Emits "DISP CPU: avg=… us" (the
+# landscape rotate-flush cost) and "DISP INTERVAL" (push cadence) as ESP_LOGI —
+# board-code logs only, NOT esp_video ISR logs, so it's safe with the camera (does
+# not re-enable the ISR-unsafe DEBUG/VERBOSE path capped above). Lets us measure the
+# real flush cost / fps on device. Drop once the display path is finalized.
+CONFIG_CAM_PIPELINE_DEBUG=y
+
+# QR decode task flattened to 1 (== lvgl + CSI + VM), so the heavy quirc decode
+# doesn't preempt the VM's present()/overlay updates. See board_common note.
+CONFIG_CAM_PIPELINE_QR_TASK_PRIORITY=1
+
+# LVGL self-checks: logging + assertions (null/malloc/mem/obj/style) abort at the
+# point of corruption with a backtrace — ideal for bad font/object pointers.
+CONFIG_LV_USE_LOG=y
+CONFIG_LV_LOG_LEVEL_WARN=y
+CONFIG_LV_USE_ASSERT_NULL=y
+CONFIG_LV_USE_ASSERT_MALLOC=y
+CONFIG_LV_USE_ASSERT_MEM_INTEGRITY=y
+CONFIG_LV_USE_ASSERT_OBJ=y
+CONFIG_LV_USE_ASSERT_STYLE=y
+
+# Partition table (16MB flash) — now includes a 'coredump' partition.
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions-16MiB-waveshare.csv"
 CONFIG_PARTITION_TABLE_FILENAME="partitions-16MiB-waveshare.csv"
 
 # P4 has no built-in Bluetooth.
 CONFIG_BT_ENABLED=n
 
-CONFIG_ESP_ERR_TO_NAME_LOOKUP=n
+# ── Network strip (air-gap guarantee) ──────────────────────────────────────
+# The radio/TCP-IP components (esp_wifi, lwip, esp_netif, esp_eth, bt,
+# esp_hosted/esp_wifi_remote, mdns, the HTTP/TLS/OTA/provisioning stacks) are
+# excluded from the build entirely via MICROPY_DISABLE_NETWORK (see
+# build_firmware.sh + the esp32_common.cmake machinery in the MicroPython
+# patch), so most of these Kconfig symbols don't even exist in the resolved
+# config. The =n lines are belt-and-suspenders: if a future change ever
+# re-pulls a network component transitively, it comes back CONFIG-DEAD rather
+# than config-live. Unknown symbols in defaults fragments are ignored.
+CONFIG_ESP_WIFI_ENABLED=n
+CONFIG_ESP_WIFI_REMOTE_ENABLED=n
+CONFIG_ESP_HOSTED_ENABLED=n
+CONFIG_ESP_NETIF_TCPIP_LWIP=n
+CONFIG_ETH_ENABLED=n
+CONFIG_ETH_USE_ESP32_EMAC=n
+CONFIG_ETH_USE_SPI_ETHERNET=n
 
-# Native RIPEMD-160 (mbedtls) — required to LINK the shared bindings/modhashlibext.c
-# ripemd160 type (mbedtls_ripemd160_*), which is compiled into every board via
-# bindings/micropython.cmake. Disabled by default in ESP-IDF's mbedtls.
+# Native RIPEMD-160 (mbedtls) for the _hashlib_ext component. Disabled by default
+# in ESP-IDF's mbedtls; embit's hash160 = ripemd160(sha256(x)) is on the BIP32
+# derivation + address-verification hot paths, so we build it native and route
+# hashlib.new("ripemd160") to it. Required to link bindings/modhashlibext.c's
+# ripemd160 type (mbedtls_ripemd160_*).
 CONFIG_MBEDTLS_RIPEMD160_C=y
