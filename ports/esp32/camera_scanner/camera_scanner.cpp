@@ -15,6 +15,13 @@
 
 static const char *TAG = "camera_scanner";
 
+/* Partition mode (P4-35 ST7796): LVGL keeps running during the preview so the
+ * side gutters render live chrome with working touch. Default off for boards
+ * that use the LVGL-stopped dummy-draw path. */
+#ifndef BOARD_CAMERA_PARTITION_MODE
+#define BOARD_CAMERA_PARTITION_MODE 0
+#endif
+
 #if BOARD_HAS_CAMERA
 
 /* The engine headers lack an extern "C" guard. Force C linkage HERE, before any
@@ -41,6 +48,15 @@ static camera_preview_overlay_t  *s_overlay  = NULL;
 static scan_coordinator_t        *s_coord    = NULL;
 static lv_obj_t                  *s_screen   = NULL;
 static bool                       s_running  = false;
+
+#if BOARD_CAMERA_PARTITION_MODE
+/* M1 partition-mode proof: a live progress widget in the right gutter (updated
+ * every present()) demonstrating non-camera LVGL chrome rendering beside the
+ * streaming square with LVGL running + touch alive. Throwaway scaffolding — M3
+ * replaces it with the real gutter layout in camera_preview_overlay (screens). */
+static lv_obj_t                  *s_gutter_bar = NULL;
+static lv_obj_t                  *s_gutter_pct = NULL;
+#endif
 
 /* ── Option A dedicated camera screen ───────────────────────────────────────────
  * The camera image + overlay render onto their OWN opaque-black screen rather than
@@ -115,6 +131,10 @@ static void cam_present(void *ctx, int percent, scan_frame_status_t status)
 
     if (lvgl_port_lock(0)) {
         camera_preview_overlay_set_progress(ov, percent, dot);
+#if BOARD_CAMERA_PARTITION_MODE
+        if (s_gutter_bar) lv_bar_set_value(s_gutter_bar, percent, LV_ANIM_OFF);
+        if (s_gutter_pct) lv_label_set_text_fmt(s_gutter_pct, "%d%%", percent);
+#endif
         lvgl_port_unlock();
     }
 }
@@ -128,6 +148,43 @@ static void cam_complete(void *ctx)
     (void)ctx;
     ESP_LOGI(TAG, "scan complete");
 }
+
+#if BOARD_CAMERA_PARTITION_MODE
+/* ── M1 gutter chrome (placeholder) ──────────────────────────────────────────
+ * On-device proof of the partition mechanism: live, non-camera LVGL widgets in
+ * the right gutter that keep updating (with the left-gutter back button
+ * touchable) while the camera direct-blits the square. Throwaway scaffolding —
+ * M3 replaces it with the real cancel/percent/vertical-bar gutter layout in the
+ * camera_preview_overlay screen. Caller holds the LVGL port lock. */
+static void cam_gutter_placeholder_create(lv_obj_t *parent, int32_t sq_x, int32_t square)
+{
+    int32_t rg_x = sq_x + square;                       /* right gutter left edge  */
+    int32_t rg_w = (int32_t)BOARD_DISP_H_RES - rg_x;    /* right gutter width (~80) */
+    if (rg_w <= 0) return;                              /* square fills the panel   */
+    int32_t cx = rg_x + rg_w / 2;
+
+    s_gutter_pct = lv_label_create(parent);
+    lv_label_set_text(s_gutter_pct, "0%");
+    lv_obj_set_style_text_color(s_gutter_pct, lv_color_white(), 0);
+    lv_obj_align(s_gutter_pct, LV_ALIGN_TOP_LEFT, cx - 16, 12);
+
+    int32_t bar_w = 20;
+    int32_t bar_h = (int32_t)BOARD_DISP_V_RES - 60;     /* taller-than-wide => vertical */
+    s_gutter_bar = lv_bar_create(parent);
+    lv_obj_set_size(s_gutter_bar, bar_w, bar_h);
+    lv_obj_set_pos(s_gutter_bar, cx - bar_w / 2, 44);
+    lv_bar_set_range(s_gutter_bar, 0, 100);
+    lv_bar_set_value(s_gutter_bar, 0, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(s_gutter_bar, lv_color_hex(0x333333), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_gutter_bar, lv_color_hex(0xF08C00), LV_PART_INDICATOR);
+}
+
+static void cam_gutter_placeholder_destroy(void)
+{
+    if (s_gutter_bar) { lv_obj_delete(s_gutter_bar); s_gutter_bar = NULL; }
+    if (s_gutter_pct) { lv_obj_delete(s_gutter_pct); s_gutter_pct = NULL; }
+}
+#endif /* BOARD_CAMERA_PARTITION_MODE */
 
 const char *cam_scanner_start(void)
 {
@@ -147,9 +204,15 @@ const char *cam_scanner_start(void)
     lv_obj_t *prev_screen = NULL;
     if (lvgl_port_lock(0)) {
         s_screen = cam_make_black_screen(&prev_screen);
+#if !BOARD_CAMERA_PARTITION_MODE
+        /* Image-widget / legacy dummy-draw paths want a responsive render kick.
+         * Partition mode drives its gutter chrome off LVGL's own ~33ms refresh
+         * timer instead, so the kick is dropped to keep the camera's blit lock
+         * uncontended (the preview is direct-blit and never LVGL-driven). */
         if (s_screen) {
             board_set_render_interval_ms(10);
         }
+#endif
         lvgl_port_unlock();
     }
     if (!s_screen) {
@@ -236,6 +299,14 @@ const char *cam_scanner_start(void)
         }
     }
 
+#if BOARD_CAMERA_PARTITION_MODE
+    /* Add the live gutter placeholder now that the session is fully built. */
+    if (lvgl_port_lock(0)) {
+        cam_gutter_placeholder_create(s_screen, sq_x, (int32_t)square);
+        lvgl_port_unlock();
+    }
+#endif
+
     s_running = true;
     ESP_LOGI(TAG, "scanner started (%ux%u square)", (unsigned)square, (unsigned)square);
     return NULL;
@@ -257,6 +328,9 @@ void cam_scanner_stop(void)
     if (s_overlay) {
         if (lvgl_port_lock(0)) {
             camera_preview_overlay_destroy(s_overlay);
+#if BOARD_CAMERA_PARTITION_MODE
+            cam_gutter_placeholder_destroy();
+#endif
             lvgl_port_unlock();
         }
         s_overlay = NULL;

@@ -92,9 +92,91 @@ Same repro ("many, many" overview re-entries + Spanish + repeated camera opens):
 internal heap now stays unfragmented enough that even the *old* 32 KB stack would fit — the root cause is
 eliminated and the demand is right-sized on top.
 
+## Follow-on: the SPI-display P4 board (LCD 3.5) — moving the task stack to PSRAM (2026-07-10)
+
+On the **P4 LCD 3.5** (`WAVESHARE_ESP32_P4_WIFI6_TOUCH_LCD_35`, ST7796 **SPI** panel) the same
+`Failed to create QR decode task` freeze returned — this time in the **"scan animated PSBT → select
+seed"** flow, which **re-opens the camera** for a 2nd session (to scan a SeedQR). All three of the 4.3
+fixes above were already in effect (k_quirc context/scratch in PSRAM, 16 KB stack), yet it still failed:
+
+```
+E cam_pipeline_qr: Failed to create QR decode task (INTERNAL free=47511 largest=13312, wanted 16384 stack)
+E scan_coordinator: QR consumer creation failed
+```
+
+Session 1 (the PSBT scan) tore down cleanly; ~7 s later session 2 couldn't get 16 KB contiguous internal.
+`camera_scanner.start()` raised `OSError`, the app caught it, and the low-memory state then **wedged the
+recovery render** (a silent deadlock — UART goes quiet, no panic/reboot).
+
+### Why the SPI board is different: it spends internal RAM the MIPI-DSI board doesn't
+
+The P4's **GPSPI peripheral is served by AHB-GDMA, which cannot reach PSRAM** (only the AXI-GDMA can). So
+on an SPI-panel board every DMA buffer on the display/camera path **must be internal DRAM**:
+
+- **LVGL draw buffers** — internal, double-buffered (`board_init.c`, standard-SPI path). ~75 KB, persistent.
+- **Camera preview stripe buffer** — internal DMA (`board_pipeline_display_lvgl.c`), up to ~75 KB during a scan.
+
+The **MIPI-DSI 4.3 keeps its LVGL draw buffers in PSRAM** (`buff_spiram=1`) and blits the camera preview
+straight to its full framebuffer — **zero internal DMA buffers**. So the 3.5's internal heap is
+structurally ~75–150 KB tighter *during a camera session*. On top of that, the app's PSBT parse +
+intervening screens fragment internal DRAM (≈150 KB idle → **47 KB free / 13 KB largest** by the 2nd
+camera open). Even the right-sized 16 KB stack has no contiguous hole. (All the *config-driven* PSRAM
+moves — `K_QUIRC_SCRATCH_IN_PSRAM`, the font cache/bitmap routing, the 128 KB LVGL pool — were already
+mirrored onto the 3.5's `sdkconfig.board`; this was the one remaining internal-only allocation.)
+
+### The fix: put the decode-task stack itself in PSRAM
+
+Right-sizing the stack (4.3, Fix #2) was a mitigation; the categorical fix is to remove the
+**contiguous-internal** requirement entirely. Both camera worker tasks now allocate their stack from PSRAM
+via `xTaskCreatePinnedToCoreWithCaps(..., MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)`:
+
+- `cam_pipeline_qr.c` (16 KB) and `cam_pipeline_entropy.c` (8 KB) — the entropy task shares the identical
+  latent risk on the SPI board, so it got the same fix.
+- **Safe** because each task is pure CPU (quirc / SHA-256 chaining) over PSRAM-resident frame data and
+  **never runs with the flash cache disabled** — the only condition under which a PSRAM stack is unsafe.
+- Prereqs `CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y` + `CONFIG_FREERTOS_SUPPORT_STATIC_ALLOCATION=y`
+  (both already set here). This is a board-agnostic change: the MIPI boards keep working (they just never
+  hit the internal wall), so it lands in the shared component, not per-board.
+
+### `...WithCaps` lifecycle gotchas (why this touched more than one line)
+
+1. **TCB stays internal.** `xTaskCreatePinnedToCoreWithCaps` allocates only the **stack** from the given
+   caps; the TCB is always `pvPortMalloc` (internal). Good — a TCB in PSRAM is touched by the scheduler
+   with the cache potentially off and would be unsafe. (~360 B internal per task remains.)
+2. **A WithCaps task must NOT self-`vTaskDelete(NULL)`.** The idle task never frees WithCaps memory, so a
+   self-delete **leaks the stack + TCB**. The tasks now **park** (`vTaskSuspend(NULL)`) after their
+   orderly-shutdown handshake, and `*_destroy()` reclaims them with **`vTaskDeleteWithCaps(handle)`**.
+3. **`vTaskDeleteWithCaps()` is synchronous + cross-core-safe.** It suspends the task, spins until it's
+   off-core, then deletes and frees — the exact guarantee the earlier hand-rolled self-delete design was
+   built to get (that design existed to avoid a cross-core `vTaskDelete` stack leak). The sem-handshake is
+   kept only so the task releases its camera frame before deletion; the old 10 ms "let idle reclaim" yield
+   is gone.
+4. **ESP-IDF stack depth is in bytes** on the RISC-V port (`portSTACK_TYPE == uint8_t`, so
+   `usStackDepth * sizeof(StackType_t) == usStackDepth`), so the same `CONFIG_..._STACK_SIZE` value passes
+   unchanged to the WithCaps API.
+
+### On-device validation (P4-35, 2026-07-10)
+
+REPL-driven (`camera_scanner` / `camera_entropy` start/stop), 4 cycles each:
+
+| | QR scanner | Entropy |
+|---|---|---|
+| `start()` success | **4/4** (was `OSError` on the 2nd real session) | **4/4** |
+| task running mid-session | `run=True` | 17 frames chained |
+| largest INTERNAL block *during* a session | **86 016** (was 13 312 at the failure; the 16 KB stack is no longer carved from it) | 86 016 |
+| internal free *after stop*, every cycle | **149 439** (no per-cycle drift) | **123 587** (no per-cycle drift) |
+
+Flat per-cycle free in both flows ⇒ the WithCaps create / `vTaskDeleteWithCaps` free path **leaks
+nothing**. The exact `~150 KB → 47 KB / 13 KB` app fragmentation that triggers the freeze is **not
+reproducible from the REPL** (MicroPython's GC heap lives in PSRAM, so REPL allocations can't starve
+internal DRAM; the prior session's synthetic scanner repro couldn't either), so the final end-to-end
+sign-off is the real "scan animated PSBT → select seed" flow on device.
+
 ## Key sources
 
 - `deps/seedsigner-lvgl-screens/components/seedsigner/seedsigner.cpp` — `psram_alloc`/`pvec`, `psbt_overview_screen`
 - `ports/esp32/board_common/components/esp-camera-pipeline/components/k_quirc/src/k_quirc_internal.h` — `K_MALLOC_CONTEXT`/`K_MALLOC_SCRATCH`
-- `ports/esp32/board_common/components/esp-camera-pipeline/components/cam_pipeline_qr/{Kconfig,src/cam_pipeline_qr.c}` — stack size; `Failed to create QR decode task` now logs `free`/`largest`
-- Related: `docs/knowledge/font-architecture-and-memory-budget.md` (why fonts spend PSRAM, not internal), `micropython-gc-heap-lives-in-psram.md`
+- `ports/esp32/board_common/components/esp-camera-pipeline/components/cam_pipeline_qr/{Kconfig,src/cam_pipeline_qr.c}` — stack size; PSRAM-stack via `xTaskCreatePinnedToCoreWithCaps`; `Failed to create QR decode task` now logs SPIRAM + INTERNAL `free`/`largest`
+- `ports/esp32/board_common/components/esp-camera-pipeline/components/cam_pipeline_entropy/src/cam_pipeline_entropy.c` — same PSRAM-stack fix (8 KB task)
+- `ports/esp32/board_common/src/board_init.c` (standard-SPI LVGL draw buffers → internal DMA) + `src/board_pipeline_display_lvgl.c` (camera stripe buffer → internal DMA) — why the SPI board's internal heap is tighter than the MIPI board's
+- Related: `docs/knowledge/font-architecture-and-memory-budget.md` (why fonts spend PSRAM, not internal), `micropython-gc-heap-lives-in-psram.md`, `esp32-p4-camera-firmware-bringup.md`

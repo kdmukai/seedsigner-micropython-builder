@@ -15,6 +15,12 @@
 
 static const char *TAG = "camera_entropy";
 
+/* Partition mode (P4-35 ST7796): LVGL keeps running during the preview. Default
+ * off for boards that use the LVGL-stopped dummy-draw path. */
+#ifndef BOARD_CAMERA_PARTITION_MODE
+#define BOARD_CAMERA_PARTITION_MODE 0
+#endif
+
 #if BOARD_HAS_CAMERA
 
 /* The engine headers lack an extern "C" guard. Force C linkage HERE, before any
@@ -146,9 +152,13 @@ const char *cam_entropy_start(const uint8_t *seed_hash, size_t seed_len)
     lv_obj_t *prev_screen = NULL;
     if (lvgl_port_lock(0)) {
         s_screen = cam_make_black_screen(&prev_screen);
+#if !BOARD_CAMERA_PARTITION_MODE
+        /* Partition mode drives chrome off LVGL's own refresh timer; the kick is
+         * only needed by the image-widget / legacy dummy-draw paths. */
         if (s_screen) {
             board_set_render_interval_ms(10);
         }
+#endif
         lvgl_port_unlock();
     }
     if (!s_screen) {
