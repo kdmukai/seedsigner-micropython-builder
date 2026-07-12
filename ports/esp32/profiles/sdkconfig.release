@@ -26,6 +26,10 @@ CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
 CONFIG_ESP_ERR_TO_NAME_LOOKUP=n
 CONFIG_ESP_SYSTEM_USE_EH_FRAME=n
 CONFIG_CAM_PIPELINE_DEBUG=n
+# The dev boards default QR_DEBUG=y (decode-stat stream). Force it off for release:
+# INFO logs are already suppressed at WARN max level, but this also drops the
+# per-frame timing instrumentation (esp_timer/atomics) it would otherwise run.
+CONFIG_CAM_PIPELINE_QR_DEBUG=n
 
 # LVGL self-checks off (each assert is per-allocation/per-object overhead in
 # the render path).

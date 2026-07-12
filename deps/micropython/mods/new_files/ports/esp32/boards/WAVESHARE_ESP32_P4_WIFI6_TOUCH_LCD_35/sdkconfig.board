@@ -181,12 +181,18 @@ CONFIG_FREERTOS_WATCHPOINT_END_OF_STACK=y
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 CONFIG_LOG_MAXIMUM_LEVEL_INFO=y
 
-# Camera pipeline fps/timing instrumentation. Emits "DISP CPU: avg=… us" (the
-# landscape rotate-flush cost) and "DISP INTERVAL" (push cadence) as ESP_LOGI —
-# board-code logs only, NOT esp_video ISR logs, so it's safe with the camera (does
-# not re-enable the ISR-unsafe DEBUG/VERBOSE path capped above). Lets us measure the
-# real flush cost / fps on device. Drop once the display path is finalized.
-CONFIG_CAM_PIPELINE_DEBUG=y
+# Camera-pipeline DISPLAY-path instrumentation ("DISP CPU"/"DISP INTERVAL"/"CAM
+# SKIP"/"CAM PPA" + the cam/disp/consumer summary), all ESP_LOGI board-code logs
+# (NOT esp_video ISR logs, so safe with the camera). OFF by default: it's display-
+# timing noise that drowns the decode stats. Flip to =y to profile the flush/rotate/
+# push path.
+CONFIG_CAM_PIPELINE_DEBUG=n
+
+# Camera-pipeline DECODE-path stats: the ~2s `decode=..fps gray/quirc det/s id%/ok%`
+# summary plus the coordinator's `scan: new/rep/miss/none per-s + dropped` rate line —
+# the useful scan-tuning stream (see docs/scan-decode-performance-plan.md). Per-frame
+# QRPX/QRMISS detail is demoted to DEBUG so this stays a clean summary.
+CONFIG_CAM_PIPELINE_QR_DEBUG=y
 
 # QR decode task flattened to 1 (== lvgl + CSI + VM), so the heavy quirc decode
 # doesn't preempt the VM's present()/overlay updates. See board_common note.
