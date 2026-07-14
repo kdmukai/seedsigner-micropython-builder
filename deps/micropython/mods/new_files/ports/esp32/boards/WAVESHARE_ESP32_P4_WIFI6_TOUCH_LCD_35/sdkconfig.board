@@ -198,6 +198,15 @@ CONFIG_CAM_PIPELINE_QR_DEBUG=y
 # doesn't preempt the VM's present()/overlay updates. See board_common note.
 CONFIG_CAM_PIPELINE_QR_TASK_PRIORITY=1
 
+# Per-core CPU-load probe (throughput-parallelization assessment, lever #3): emits
+# a `cpu_load: core0/core1 busy/idle | core0 headroom` line on the QR debug cadence
+# (cam_pipeline_qr.c log_cpu_load). This ST7796 SPI board drives the panel from the
+# CPU (no DSI/PPA display offload), so expect LESS core-0 headroom than the 4.3 —
+# the number this measures. Run-time stats cost a small esp_timer read per context
+# switch — DEBUG builds only; drop for release.
+CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
+CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+
 # LVGL self-checks: logging + assertions (null/malloc/mem/obj/style) abort at the
 # point of corruption with a backtrace — ideal for bad font/object pointers.
 CONFIG_LV_USE_LOG=y
