@@ -31,15 +31,28 @@
 
 #include "camera_scanner.h"
 
-// start() -> None. Raises OSError with a short reason on bring-up failure.
-static mp_obj_t mp_camera_scanner_start(void) {
-    const char *err = cam_scanner_start();
+// start(focus_assist=False) -> None. Raises OSError with a short reason on
+// bring-up failure. focus_assist=True brings up the camera preview with an
+// on-screen software focus meter (quirc skipped) instead of the QR scan overlay;
+// in that mode poll_new()/read_status()/report() are inert. start() with no
+// args is the normal scan session (unchanged for existing call sites).
+static mp_obj_t mp_camera_scanner_start(size_t n_args, const mp_obj_t *pos_args,
+                                        mp_map_t *kw_args) {
+    enum { ARG_focus_assist };
+    static const mp_arg_t allowed_args[] = {
+        { MP_QSTR_focus_assist, MP_ARG_BOOL, { .u_bool = false } },
+    };
+    mp_arg_val_t args[MP_ARRAY_SIZE(allowed_args)];
+    mp_arg_parse_all(n_args, pos_args, kw_args, MP_ARRAY_SIZE(allowed_args),
+                     allowed_args, args);
+
+    const char *err = cam_scanner_start(args[ARG_focus_assist].u_bool);
     if (err) {
         mp_raise_msg_varg(&mp_type_OSError, MP_ERROR_TEXT("%s"), err);
     }
     return mp_const_none;
 }
-static MP_DEFINE_CONST_FUN_OBJ_0(camera_scanner_start_obj, mp_camera_scanner_start);
+static MP_DEFINE_CONST_FUN_OBJ_KW(camera_scanner_start_obj, 0, mp_camera_scanner_start);
 
 // stop() -> None.
 static mp_obj_t mp_camera_scanner_stop(void) {
@@ -65,6 +78,42 @@ static mp_obj_t mp_camera_scanner_poll_new(void) {
     return mp_obj_new_bytes(payload, len);
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(camera_scanner_poll_new_obj, mp_camera_scanner_poll_new);
+
+// poll_miss_frame() -> (bytes, meta) | None. DIAGNOSTIC: drains the latest sampled
+// located-but-undecoded frame (only produced during a scan on a debug build). The
+// bytes are a width*height grayscale crop; meta is an attrtuple describing why it
+// missed (quirc_err) and how it looked (side_px / sharpness / luma). None when no
+// new miss is available. The C buffer is valid only until the next call, so the
+// bytes are copied out here at once.
+static mp_obj_t mp_camera_scanner_poll_miss_frame(void) {
+    const uint8_t *payload = NULL;
+    size_t len = 0;
+    cam_scanner_miss_meta_t m;
+    if (!cam_scanner_poll_miss_frame(&payload, &len, &m)) {
+        return mp_const_none;
+    }
+    static const qstr fields[] = {
+        MP_QSTR_seq, MP_QSTR_timestamp_us, MP_QSTR_quirc_err,
+        MP_QSTR_side_px, MP_QSTR_sharpness, MP_QSTR_luma_mean,
+        MP_QSTR_width, MP_QSTR_height,
+    };
+    mp_obj_t meta_items[] = {
+        mp_obj_new_int_from_uint(m.seq),
+        mp_obj_new_int_from_ll(m.timestamp_us),
+        MP_OBJ_NEW_SMALL_INT(m.quirc_err),
+        mp_obj_new_float(m.side_px),
+        mp_obj_new_float(m.sharpness),
+        MP_OBJ_NEW_SMALL_INT(m.luma_mean),
+        mp_obj_new_int_from_uint(m.width),
+        mp_obj_new_int_from_uint(m.height),
+    };
+    mp_obj_t ret[] = {
+        mp_obj_new_bytes(payload, len),
+        mp_obj_new_attrtuple(fields, MP_ARRAY_SIZE(meta_items), meta_items),
+    };
+    return mp_obj_new_tuple(2, ret);
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(camera_scanner_poll_miss_frame_obj, mp_camera_scanner_poll_miss_frame);
 
 // read_status() -> attrtuple(latest, consecutive_misses, dropped_new, has_corners).
 static mp_obj_t mp_camera_scanner_read_status(void) {
@@ -107,6 +156,7 @@ static const mp_rom_map_elem_t camera_scanner_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_stop), MP_ROM_PTR(&camera_scanner_stop_obj) },
     { MP_ROM_QSTR(MP_QSTR_is_running), MP_ROM_PTR(&camera_scanner_is_running_obj) },
     { MP_ROM_QSTR(MP_QSTR_poll_new), MP_ROM_PTR(&camera_scanner_poll_new_obj) },
+    { MP_ROM_QSTR(MP_QSTR_poll_miss_frame), MP_ROM_PTR(&camera_scanner_poll_miss_frame_obj) },
     { MP_ROM_QSTR(MP_QSTR_read_status), MP_ROM_PTR(&camera_scanner_read_status_obj) },
     { MP_ROM_QSTR(MP_QSTR_report), MP_ROM_PTR(&camera_scanner_report_obj) },
     { MP_ROM_QSTR(MP_QSTR_report_complete), MP_ROM_PTR(&camera_scanner_report_complete_obj) },

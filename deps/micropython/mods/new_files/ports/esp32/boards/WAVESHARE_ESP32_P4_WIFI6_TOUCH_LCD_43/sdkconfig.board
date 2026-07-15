@@ -168,16 +168,33 @@ CONFIG_FREERTOS_WATCHPOINT_END_OF_STACK=y
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 CONFIG_LOG_MAXIMUM_LEVEL_INFO=y
 
-# Camera pipeline fps/timing instrumentation. Emits "DISP CPU: avg=… us" (the
-# landscape rotate-flush cost) and "DISP INTERVAL" (push cadence) as ESP_LOGI —
-# board-code logs only, NOT esp_video ISR logs, so it's safe with the camera (does
-# not re-enable the ISR-unsafe DEBUG/VERBOSE path capped above). Lets us measure the
-# real flush cost / fps on device. Drop once the display path is finalized.
+# Camera-pipeline DISPLAY-path instrumentation ("DISP CPU"/"DISP INTERVAL"/"CAM
+# SKIP"/"CAM PPA" + the cam/disp/consumer summary), all ESP_LOGI board-code logs
+# (NOT esp_video ISR logs, so safe with the camera). Normally OFF (display-timing
+# noise that drowns the decode stats); TEMPORARILY ON for the core-0 attribution
+# measurement — gives the real camera_fps/display_fps + CAM PPA us to pair with the
+# per-task cpu_load breakdown. Revert to =n once the attribution capture is done.
 CONFIG_CAM_PIPELINE_DEBUG=y
+
+# Camera-pipeline DECODE-path stats: the ~2s `decode=..fps gray/quirc det/s id%/ok%`
+# summary plus the coordinator's `scan: new/rep/miss/none per-s + dropped` rate line —
+# the useful scan-tuning stream (see docs/scan-decode-performance-plan.md). Per-frame
+# QRPX/QRMISS detail is demoted to DEBUG so this stays a clean summary.
+CONFIG_CAM_PIPELINE_QR_DEBUG=y
 
 # QR decode task flattened to 1 (== lvgl + CSI + VM), so the heavy quirc decode on
 # core 1 doesn't preempt the VM's present()/overlay updates. See board_common note.
 CONFIG_CAM_PIPELINE_QR_TASK_PRIORITY=1
+
+# Per-core + per-task CPU-load probe (throughput-parallelization assessment, lever #3):
+# emits a `cpu_load: core0/core1 busy/idle | core0 headroom` summary plus per-task
+# `cpu[name] coreN = %` breakdown lines on the QR debug cadence (cam_pipeline_qr.c
+# log_cpu_load) — attributes each core's load BY TASK (capture/frame_cb vs ISP vs LVGL
+# vs the MicroPython poll vs qr_decode). VTASKLIST_INCLUDE_COREID adds the per-task core
+# column. Run-time stats cost a small esp_timer read per context switch — DEBUG only.
+CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
+CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+CONFIG_FREERTOS_VTASKLIST_INCLUDE_COREID=y
 
 # LVGL self-checks: logging + assertions (null/malloc/mem/obj/style) abort at the
 # point of corruption with a backtrace — ideal for bad font/object pointers.

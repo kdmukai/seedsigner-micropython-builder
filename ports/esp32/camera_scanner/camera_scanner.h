@@ -66,8 +66,16 @@ typedef struct {
  * static error string (no camera on this board, pipeline/overlay/coordinator
  * create failure) that the binding raises. Must be called from the MicroPython
  * (consumer) task — it takes the esp_lvgl_port lock for the overlay build.
+ *
+ * focus_assist selects a DIFFERENT session: instead of the scan overlay +
+ * coordinator, it brings up the camera preview with an on-screen software
+ * focus meter (Laplacian sharpness; quirc skipped so the loop runs at the
+ * camera rate) so a user can dial the fixed lens to the sharp plane. The C
+ * side renders the meter entirely — no NEW-ring/report()/poll contract applies
+ * in this mode (poll_new/read_status/report are inert). Pass false for the
+ * normal QR scan session.
  */
-const char *cam_scanner_start(void);
+const char *cam_scanner_start(bool focus_assist);
 
 /* Tear down coordinator + overlay + pipeline. Idempotent. Takes the LVGL lock. */
 void cam_scanner_stop(void);
@@ -84,6 +92,31 @@ bool cam_scanner_poll_new(const uint8_t **payload, size_t *len);
 
 /* CONSUMER task: snapshot the coalesced status + counters. */
 void cam_scanner_read_status(cam_scanner_status_t *out);
+
+/*
+ * Diagnostic miss-frame metadata -- a scalar projection of the engine's
+ * cam_pipeline_qr_miss_meta_t (kept out of this scalar-only header). See
+ * cam_scanner_poll_miss_frame().
+ */
+typedef struct {
+    uint32_t seq;          /* monotonic capture index                        */
+    int64_t  timestamp_us; /* capture time                                   */
+    int      quirc_err;    /* k_quirc error of the rejected code (-1 if none) */
+    float    side_px;      /* measured QR side length in the crop (px)        */
+    float    sharpness;    /* Laplacian edge energy of the crop (focus proxy) */
+    uint8_t  luma_mean;    /* mean crop luminance 0..255                      */
+    uint32_t width;        /* grayscale crop dims (payload is width*height B) */
+    uint32_t height;
+} cam_scanner_miss_meta_t;
+
+/*
+ * CONSUMER task: drain the latest sampled MISS frame (diagnostic; only produces
+ * frames during a scan on a CONFIG_CAM_PIPELINE_QR_DEBUG build). Returns true and
+ * fills *payload (grayscale, width*height bytes, valid ONLY until the next call)
+ * + *len + *meta when a new sampled miss is available; false otherwise.
+ */
+bool cam_scanner_poll_miss_frame(const uint8_t **payload, size_t *len,
+                                 cam_scanner_miss_meta_t *meta);
 
 /*
  * CONSUMER task: report the domain result of a frame back to the coordinator,
