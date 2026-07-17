@@ -113,6 +113,17 @@ CONFIG_LV_TINY_TTF_CACHE_KERNING_CNT=0
 # BaseException" and the REPL can't run a single statement. FreeRTOS task-stack
 # canaries below give stack-overflow detection without touching the C epilogues.
 
+# C++ exceptions ENABLED: the screens library reports config/render errors by
+# THROWING; run_screen catches and surfaces them as a Python ValueError naming the
+# failure. With the IDF default (exceptions off) the linker wraps
+# __cxa_allocate_exception into an abort() stub, so ANY screen throw kills the chip
+# with an uninformative abort-cascade backtrace instead of a recoverable error.
+# (Device-confirmed 2026-07-16: a missing required cfg key on seed_transcribe_zoomed_qr_screen
+# threw and aborted the P4 — "light blue screen + serial garble" — with exceptions off.)
+# Mirrors the P4-35 board. NB: this is orthogonal to COMPILER_STACK_CHECK above,
+# which stays OFF (its canary epilogues break MicroPython's NLR).
+CONFIG_COMPILER_CXX_EXCEPTIONS=y
+
 # RISC-V: print a readable call-stack backtrace on panic (DWARF .eh_frame), and
 # resolve esp_err_t codes to names.
 CONFIG_ESP_SYSTEM_USE_EH_FRAME=y
