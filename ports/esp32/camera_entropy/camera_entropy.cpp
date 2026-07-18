@@ -38,6 +38,8 @@ extern "C" {
 #include "lvgl.h"
 
 #include "camera_entropy_overlay.h"  /* seedsigner-lvgl-screens overlay (LVGL) */
+#include "image_entropy.h"           /* seedsigner-lvgl-screens display processing (BUILDER-1) */
+#include "esp_heap_caps.h"
 
 /* Single live session: one camera, one entropy consumer, tied to start()/stop(). */
 static cam_pipeline_handle_t          s_pipeline = NULL;
@@ -47,6 +49,7 @@ static lv_obj_t                      *s_screen   = NULL;
 static bool                           s_running  = false;
 static bool                           s_await_confirm = false;  /* capture()→CONFIRM latch */
 static volatile uint32_t              s_frames   = 0;  /* live progress counter */
+static uint32_t                       s_square   = 0;  /* latched-frame side length (px) */
 static uint8_t                        s_seed[32];      /* copy of optional seed */
 
 /* Overlay strings are HOST-PROVIDED + already localized (cam_entropy_set_labels, called
@@ -189,6 +192,7 @@ const char *cam_entropy_start(const uint8_t *seed_hash, size_t seed_len)
     }
 
     s_frames = 0;
+    s_square = square;  /* latched-frame dims for the CONFIRM full-display image */
     cam_pipeline_entropy_config_t ecfg = {};
     ecfg.pipeline     = s_pipeline;
     ecfg.frame_width  = square;
@@ -291,6 +295,7 @@ void cam_entropy_stop(void)
     }
     memset(s_seed, 0, sizeof(s_seed));
     s_frames = 0;
+    s_square = 0;
     s_await_confirm = false;
     /* Option A: leave our black cam screen loaded as the active screen — camera image +
      * overlay widgets gone, it shows black, covering the teardown→next-load gap. We drop
@@ -321,6 +326,48 @@ void cam_entropy_capture(void)
     overlay_set_phase(CAMERA_ENTROPY_PHASE_CAPTURING);
 }
 
+/* BUILDER-1: on entering CONFIRM, render the latched RAW final frame full-display
+ * (aspect crop-to-fill + luminance contrast stretch, via the screens-repo
+ * image_entropy_process) and hand it to the overlay as the review image. This is
+ * DISPLAY-ONLY: the entropy chain and get_result()'s (chain, frame) stay the RAW
+ * latched bytes — processed pixels are never fed back into the entropy hash.
+ *
+ * Non-partition boards only (the DSI/image-widget path, e.g. the P4-43): under
+ * BOARD_CAMERA_PARTITION_MODE the camera owns the preview square and LVGL's flush
+ * is redirected to the gutters, so a full-display LVGL image can't cover the
+ * square — those boards keep the frozen center-square review (compiled out here). */
+static void push_confirm_image(void)
+{
+#if !BOARD_CAMERA_PARTITION_MODE
+    if (!s_entropy || !s_overlay || s_square == 0) {
+        return;
+    }
+    const uint8_t *raw = NULL;
+    size_t raw_len = 0;
+    if (!cam_pipeline_entropy_get_result(s_entropy, NULL, NULL, &raw, &raw_len, NULL) ||
+        !raw || raw_len < (size_t)s_square * s_square * 2) {
+        return;  /* no latch yet / unexpected size — leave the frozen square */
+    }
+    const int32_t dw = BOARD_DISP_H_RES;
+    const int32_t dh = BOARD_DISP_V_RES;
+    /* Full-panel RGB565 scratch in PSRAM (same size class as the overlay's own
+     * deep copy and the QR A8 mask). Graceful skip on OOM — the overlay keeps the
+     * frozen square. */
+    uint16_t *disp = (uint16_t *)heap_caps_malloc((size_t)dw * dh * 2, MALLOC_CAP_SPIRAM);
+    if (!disp) {
+        ESP_LOGW(TAG, "confirm-image alloc failed (%d B SPIRAM)", (int)((size_t)dw * dh * 2));
+        return;
+    }
+    image_entropy_process(raw, (int32_t)s_square, (int32_t)s_square,
+                          IMAGE_ENTROPY_PIXFMT_RGB565, disp, dw, dh);
+    if (lvgl_port_lock(0)) {
+        camera_entropy_overlay_set_confirm_image(s_overlay, disp, dw, dh);
+        lvgl_port_unlock();
+    }
+    heap_caps_free(disp);  /* the overlay deep-copied it */
+#endif
+}
+
 bool cam_entropy_get_result(const uint8_t **chain, size_t *chain_len,
                             const uint8_t **frame, size_t *frame_len,
                             uint32_t *frames_chained)
@@ -331,9 +378,11 @@ bool cam_entropy_get_result(const uint8_t **chain, size_t *chain_len,
     bool ok = cam_pipeline_entropy_get_result(s_entropy, chain, chain_len,
                                               frame, frame_len, frames_chained);
     /* First successful latch after capture(): advance CAPTURING → CONFIRM (accept /
-     * reshoot). One-shot so repeated polls don't re-trigger. */
+     * reshoot). One-shot so repeated polls don't re-trigger. Build the full-display
+     * review image before flipping the phase so it's ready when CONFIRM reveals it. */
     if (ok && s_await_confirm) {
         s_await_confirm = false;
+        push_confirm_image();  /* BUILDER-1 (non-partition boards); no-op otherwise */
         overlay_set_phase(CAMERA_ENTROPY_PHASE_CONFIRM);
     }
     return ok;
