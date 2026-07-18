@@ -21,18 +21,31 @@ firmware.
 
 ## BUILDER-1 — full-display confirm-image in the entropy overlay
 
-The base `camera_entropy` overlay (PREVIEW → CAPTURING → CONFIRM with a center-square frozen
-frame) + `set_labels` is done. Enhancement: on entering CONFIRM, show the captured image
-**full-display, crop-to-fill + contrast-stretched** (faithful to the PIL
-`ToolsImageEntropyFinalImageScreen` it replaces), using the screens APIs already in the pinned
-submodule (`image_entropy_process()`, `camera_entropy_overlay_set_confirm_image()`, PR #73
-`f948b1f`).
+**Status:** ✅ implemented for the non-partition (DSI/image-widget) path — the **P4-43** — and
+shipped in firmware (builder `d34da8a`); ⬜ the **P4-35** (partition-mode SPI) keeps the frozen
+center square pending a compositing follow-up (see below). On-device **visual** verification of
+the confirm image is still open (needs the touch-driven image-entropy flow).
 
-- In `ports/esp32/camera_entropy/camera_entropy.cpp`: on `capture()`/entering CONFIRM, run
-  `image_entropy_process()` on the latched **RAW** frame → a PSRAM buffer → push via
-  `camera_entropy_overlay_set_confirm_image()`. Auto-hide on `resume()`.
-- **Invariant:** crop + contrast are **display-only**. `get_result()`'s `(chain, frame)` must stay
-  the RAW latched bytes — never the processed display image.
+`ports/esp32/camera_entropy/camera_entropy.cpp` now, on entering CONFIRM (`cam_entropy_get_result`
+first-latch), runs `image_entropy_process()` on the latched **RAW** square frame → a full-panel
+PSRAM RGB565 buffer → `camera_entropy_overlay_set_confirm_image()`, then flips the phase; the
+overlay auto-hides it on `resume()`. Buffer is freed after the overlay deep-copies it; OOM
+degrades to the frozen square. **Invariant preserved:** the crop+contrast is display-only —
+`get_result()`'s `(chain, frame)` and the entropy chain stay the RAW latched bytes.
+
+**Remaining (P4-35 / partition mode):** under `BOARD_CAMERA_PARTITION_MODE` the camera owns the
+preview square as the sole SPI writer and LVGL's flush is redirected to the shadow-FB gutters, so
+a full-display LVGL confirm image can't cover the square. The helper is compiled out there
+(`#if !BOARD_CAMERA_PARTITION_MODE`). A partition-mode confirm image needs the processed frame
+composited into the shadow FB (or the camera session ended / flush-redirect lifted) on entering
+CONFIRM — a follow-up.
+
+- Screens APIs used (already in the pinned submodule): `image_entropy_process()`,
+  `camera_entropy_overlay_set_confirm_image()` (PR #73 `f948b1f`).
+- **Byte-order note (verify on device):** the implementation assumes the latched frame is
+  native-endian RGB565 (matching `image_entropy.h` + the desktop-verified path; the panel
+  byte-swap, if any, happens uniformly at the display-driver flush below the LVGL layer). Confirm
+  colors render correctly when the flow is exercised.
 
 ## BUILDER-2 — expose device-uniqueness + time for entropy composition (SEC-1)
 
