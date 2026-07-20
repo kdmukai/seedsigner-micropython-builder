@@ -57,6 +57,12 @@ static uint8_t                        s_seed[32];      /* copy of optional seed 
  * shutter's camera icon is a symbol supplied by the overlay itself. */
 static char s_capturing_text[80] = {0};  /* CAPTURING transient, e.g. "Capturing image..." */
 static char s_accept_label[40]   = {0};  /* CONFIRM accept button, e.g. "Accept" */
+/* Hardware-input bottom instruction lines. The overlay draws these only under
+ * INPUT_MODE_HARDWARE, so they are inert on a touch panel — carried so the shared host
+ * loop can pass all four labels unconditionally and a physical-input ESP board needs no
+ * plumbing change. See docs/camera-entropy-contract-conformance-todo.md. */
+static char s_preview_instructions[80] = {0};  /* PREVIEW, e.g. "< back  |  click a button" */
+static char s_confirm_instructions[80] = {0};  /* CONFIRM, e.g. "< reshoot  |  accept >"    */
 
 /* Flip the overlay phase under the LVGL lock (host thread calls capture/resume/etc). */
 static void overlay_set_phase(camera_entropy_phase_t phase)
@@ -132,10 +138,13 @@ static void copy_label(char *dst, size_t cap, const char *src)
     }
 }
 
-void cam_entropy_set_labels(const char *capturing_text, const char *accept_label)
+void cam_entropy_set_labels(const char *capturing_text, const char *accept_label,
+                            const char *preview_instructions, const char *confirm_instructions)
 {
-    copy_label(s_capturing_text, sizeof(s_capturing_text), capturing_text);
-    copy_label(s_accept_label,   sizeof(s_accept_label),   accept_label);
+    copy_label(s_capturing_text,       sizeof(s_capturing_text),       capturing_text);
+    copy_label(s_accept_label,         sizeof(s_accept_label),         accept_label);
+    copy_label(s_preview_instructions, sizeof(s_preview_instructions), preview_instructions);
+    copy_label(s_confirm_instructions, sizeof(s_confirm_instructions), confirm_instructions);
 }
 
 const char *cam_entropy_start(const uint8_t *seed_hash, size_t seed_len)
@@ -224,6 +233,9 @@ const char *cam_entropy_start(const uint8_t *seed_hash, size_t seed_len)
         spec.square_h        = (int32_t)square;
         spec.capturing_text  = s_capturing_text[0] ? s_capturing_text : NULL;
         spec.accept_label    = s_accept_label[0]   ? s_accept_label   : NULL;
+        /* Hardware-mode only; the overlay ignores these under INPUT_MODE_TOUCH. */
+        spec.preview_instructions = s_preview_instructions[0] ? s_preview_instructions : NULL;
+        spec.confirm_instructions = s_confirm_instructions[0] ? s_confirm_instructions : NULL;
         spec.capture_icon    = NULL;  /* overlay defaults to the camera glyph */
         spec.capture_style   = CAMERA_ENTROPY_CAPTURE_RING;
         spec.phase           = CAMERA_ENTROPY_PHASE_PREVIEW;
@@ -402,7 +414,11 @@ void cam_entropy_resume(void)
 
 const char *cam_entropy_start(const uint8_t *seed_hash, size_t seed_len) { (void)seed_hash; (void)seed_len; return "board has no camera"; }
 void cam_entropy_stop(void) {}
-void cam_entropy_set_labels(const char *capturing_text, const char *accept_label) { (void)capturing_text; (void)accept_label; }
+void cam_entropy_set_labels(const char *capturing_text, const char *accept_label,
+                            const char *preview_instructions, const char *confirm_instructions) {
+    (void)capturing_text; (void)accept_label;
+    (void)preview_instructions; (void)confirm_instructions;
+}
 bool cam_entropy_is_running(void) { return false; }
 uint32_t cam_entropy_frames_chained(void) { return 0; }
 void cam_entropy_capture(void) {}

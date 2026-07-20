@@ -45,11 +45,18 @@ const char *cam_entropy_start(const uint8_t *seed_hash, size_t seed_len);
 void cam_entropy_stop(void);
 
 /* Supply the overlay's HOST-PROVIDED, already-localized strings (the app's gettext),
- * BEFORE start() — nothing is hardcoded in the overlay. Either arg may be NULL/empty.
+ * BEFORE start() — nothing is hardcoded in the overlay. Any arg may be NULL/empty.
  * Persists until changed. (The shutter's camera icon is a symbol the overlay supplies.)
- *   capturing_text — the "Capturing image..." transient
- *   accept_label   — the CONFIRM accept button */
-void cam_entropy_set_labels(const char *capturing_text, const char *accept_label);
+ *   capturing_text       — the "Capturing image..." transient        (both input modes)
+ *   accept_label         — the CONFIRM accept button                 (touch mode)
+ *   preview_instructions — PREVIEW bottom instruction line           (hardware mode)
+ *   confirm_instructions — CONFIRM bottom instruction line           (hardware mode)
+ * The overlay renders the instruction lines only under INPUT_MODE_HARDWARE, so on a
+ * touch panel the last two are stored but never drawn. They are carried anyway so the
+ * one cross-platform host loop can pass all four unconditionally and a future ESP board
+ * with physical inputs works without a binding/engine change. */
+void cam_entropy_set_labels(const char *capturing_text, const char *accept_label,
+                            const char *preview_instructions, const char *confirm_instructions);
 
 /* True while a capture session is live (between start and stop). */
 bool cam_entropy_is_running(void);

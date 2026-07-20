@@ -47,6 +47,13 @@ git config --global --add safe.directory '*' 2>/dev/null || true
 ./scripts/prepare_sources_from_image.sh "$ROOT_DIR/deps"
 ./scripts/setup_env.sh "$ROOT_DIR/deps"
 ./scripts/ci_build.sh "$ROOT_DIR/deps"
-./scripts/run_screenshot_generator.sh "$ROOT_DIR/deps"
 
-echo "DONE: firmware + screenshots built."
+# The screenshot gallery is an optional extra, only useful when working on the
+# LVGL screens repo. It is skipped by default for local builds to save time;
+# opt in with BUILD_SCREENSHOTS=1. CI builds it via scripts/ci/ci.sh regardless.
+if [ "${BUILD_SCREENSHOTS:-0}" = "1" ]; then
+  ./scripts/run_screenshot_generator.sh "$ROOT_DIR/deps"
+  echo "DONE: firmware + screenshots built."
+else
+  echo "DONE: firmware built. (Screenshot gallery skipped; set BUILD_SCREENSHOTS=1 to build it.)"
+fi
