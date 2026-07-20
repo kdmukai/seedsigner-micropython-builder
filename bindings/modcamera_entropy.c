@@ -52,17 +52,34 @@ static mp_obj_t mp_camera_entropy_stop(void) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(camera_entropy_stop_obj, mp_camera_entropy_stop);
 
-// set_labels(capturing_text, accept_label) -> None. Supply the overlay's localized
-// strings (the app's gettext) BEFORE start() so nothing is hardcoded in the overlay.
-// Either arg may be None. Persists until changed. The shutter's camera icon is a symbol
-// the overlay supplies itself.
-static mp_obj_t mp_camera_entropy_set_labels(mp_obj_t capturing_obj, mp_obj_t accept_obj) {
-    const char *capturing = (capturing_obj == mp_const_none) ? NULL : mp_obj_str_get_str(capturing_obj);
-    const char *accept    = (accept_obj    == mp_const_none) ? NULL : mp_obj_str_get_str(accept_obj);
-    cam_entropy_set_labels(capturing, accept);
+// Optional positional string arg -> const char *, NULL when absent or None.
+static const char *opt_str(size_t n_args, const mp_obj_t *args, size_t i) {
+    if (i >= n_args || args[i] == mp_const_none) {
+        return NULL;
+    }
+    return mp_obj_str_get_str(args[i]);
+}
+
+// set_labels(capturing_text, accept_label, preview_instructions, confirm_instructions) -> None.
+// Supply the overlay's localized strings (the app's gettext) BEFORE start() so nothing is
+// hardcoded in the overlay. Any arg may be None/omitted. Persists until changed. The shutter's
+// camera icon is a symbol the overlay supplies itself.
+//
+// Args 1-2 are the TOUCH affordances (the CAPTURING transient + the CONFIRM accept button) and
+// are what this board renders today. Args 3-4 are the HARDWARE-input bottom instruction lines
+// ("< back | click a button"), rendered by the overlay only under INPUT_MODE_HARDWARE — inert
+// on a touch panel. They are accepted and plumbed through regardless so the ONE cross-platform
+// host loop can pass all four unconditionally (the Pi hardware-mode path already does), and so
+// an ESP board with physical inputs needs no binding change. See
+// docs/camera-entropy-contract-conformance-todo.md.
+static mp_obj_t mp_camera_entropy_set_labels(size_t n_args, const mp_obj_t *args) {
+    cam_entropy_set_labels(opt_str(n_args, args, 0),   // capturing_text
+                           opt_str(n_args, args, 1),   // accept_label
+                           opt_str(n_args, args, 2),   // preview_instructions (hardware mode)
+                           opt_str(n_args, args, 3));  // confirm_instructions (hardware mode)
     return mp_const_none;
 }
-static MP_DEFINE_CONST_FUN_OBJ_2(camera_entropy_set_labels_obj, mp_camera_entropy_set_labels);
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(camera_entropy_set_labels_obj, 0, 4, mp_camera_entropy_set_labels);
 
 // is_running() -> bool.
 static mp_obj_t mp_camera_entropy_is_running(void) {
