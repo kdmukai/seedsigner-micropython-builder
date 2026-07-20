@@ -30,8 +30,13 @@ CONFIG_ESP_VIDEO_ENABLE_ISP_PIPELINE_CONTROLLER=y
 #    task; the 2048 default overflows.
 CONFIG_ESP_VIDEO_DISABLE_MIPI_CSI_DRIVER_BACKUP_BUFFER=n
 CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH=4096
-# CSI auto-exposure target (0 = ISP default; bright image decodes a binary QR best).
-CONFIG_BOARD_CSI_AE_TARGET=0
+# CSI auto-exposure target. Decode is a BAND in captured-crop brightness (mean
+# ~168-180), not "brighter is better": too dim and the AEC reaches for gain whose
+# read-noise swamps the black/white module separation, too bright and clipped
+# highlights eat it from the other side. 110 lands mid-band -- measured decode-rate
+# 1.00 on a mounted 32" VA on-axis and on a MacBook at -3. See board_common Kconfig
+# BOARD_CSI_AE_TARGET for the full rationale and the re-measure caveat.
+CONFIG_BOARD_CSI_AE_TARGET=110
 # Route k_quirc decoder context + flood-fill scratch to PSRAM: keeps their ~80 KB
 # internal-RAM footprint off the fragmented internal heap so the camera QR-decode task
 # stack can reserve its contiguous block (defense-in-depth for the QR-task internal-RAM
