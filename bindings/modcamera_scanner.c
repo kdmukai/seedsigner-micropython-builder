@@ -31,16 +31,23 @@
 
 #include "camera_scanner.h"
 
-// start(focus_assist=False) -> None. Raises OSError with a short reason on
-// bring-up failure. focus_assist=True brings up the camera preview with an
-// on-screen software focus meter (quirc skipped) instead of the QR scan overlay;
-// in that mode poll_new()/read_status()/report() are inert. start() with no
-// args is the normal scan session (unchanged for existing call sites).
+// start(focus_assist=False, instructions_text=None) -> None. Raises OSError with
+// a short reason on bring-up failure. focus_assist=True brings up the camera
+// preview with an on-screen software focus meter (quirc skipped) instead of the QR
+// scan overlay; in that mode poll_new()/read_status()/report() are inert. start()
+// with no args is the normal scan session (unchanged for existing call sites).
+//
+// instructions_text is the Pi Zero hardware-mode overlay hint line; the ESP touch
+// UI shows its own persistent gutter back button and doesn't use it. We accept the
+// kwarg for cross-platform contract parity (both targets share one Python call site)
+// and ignore it — declaring it here is what keeps mp_arg_parse_all from raising
+// TypeError on the extra keyword.
 static mp_obj_t mp_camera_scanner_start(size_t n_args, const mp_obj_t *pos_args,
                                         mp_map_t *kw_args) {
-    enum { ARG_focus_assist };
+    enum { ARG_focus_assist, ARG_instructions_text };
     static const mp_arg_t allowed_args[] = {
         { MP_QSTR_focus_assist, MP_ARG_BOOL, { .u_bool = false } },
+        { MP_QSTR_instructions_text, MP_ARG_OBJ, { .u_rom_obj = MP_ROM_NONE } },
     };
     mp_arg_val_t args[MP_ARRAY_SIZE(allowed_args)];
     mp_arg_parse_all(n_args, pos_args, kw_args, MP_ARRAY_SIZE(allowed_args),
