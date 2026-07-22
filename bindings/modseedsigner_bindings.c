@@ -260,6 +260,15 @@ static mp_obj_t mp_seedsigner_lvgl_opening_splash_screen(size_t n_args, const mp
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(seedsigner_lvgl_opening_splash_screen_obj, 0, 1, mp_seedsigner_lvgl_opening_splash_screen);
 
+// The app's Settings -> Version screen: fixed-width version name plus optional
+// fork/commit rows and a bottom-pinned timestamp. VersionView (settings_views.py)
+// runs this by name on both platforms; the version data comes from Version /
+// the firmware-frozen _version module. Reports completion via the poll queue.
+static mp_obj_t mp_seedsigner_lvgl_version_screen(size_t n_args, const mp_obj_t *args) {
+    return run_cfg_screen(version_screen, "version_screen", n_args, args);
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(seedsigner_lvgl_version_screen_obj, 0, 1, mp_seedsigner_lvgl_version_screen);
+
 static mp_obj_t mp_seedsigner_lvgl_screensaver_screen(void) {
     const char *err = run_screen(screensaver_screen, NULL);
     if (err) {
@@ -1068,6 +1077,7 @@ static const mp_rom_map_elem_t seedsigner_lvgl_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_dismiss_toast), MP_ROM_PTR(&seedsigner_lvgl_dismiss_toast_obj) },
     { MP_ROM_QSTR(MP_QSTR_main_menu_screen), MP_ROM_PTR(&seedsigner_lvgl_main_menu_screen_obj) },
     { MP_ROM_QSTR(MP_QSTR_opening_splash_screen), MP_ROM_PTR(&seedsigner_lvgl_opening_splash_screen_obj) },
+    { MP_ROM_QSTR(MP_QSTR_version_screen), MP_ROM_PTR(&seedsigner_lvgl_version_screen_obj) },
     { MP_ROM_QSTR(MP_QSTR_screensaver_screen), MP_ROM_PTR(&seedsigner_lvgl_screensaver_screen_obj) },
     { MP_ROM_QSTR(MP_QSTR_poll_for_result), MP_ROM_PTR(&seedsigner_lvgl_poll_for_result_obj) },
     { MP_ROM_QSTR(MP_QSTR_clear_result_queue), MP_ROM_PTR(&seedsigner_lvgl_clear_result_queue_obj) },
